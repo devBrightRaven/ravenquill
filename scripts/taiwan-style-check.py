@@ -6,7 +6,7 @@ Scans style hard rules, outputs Markdown report to stdout.
 - Exit 10: any hit
 
 Usage:
-    python taiwan-style-check.py <file.md>
+    python taiwan-style-check.py <file.md> [--public]
 
 Rule sync: rules here mirror methodology/taiwan-writing-glossary.md §6 and the
 "conclusion-lead / noise-frame" section of methodology/writing-harness.md S1.
@@ -16,6 +16,7 @@ left to LLM self-comparison against the glossary table, not regex.
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -40,7 +41,7 @@ SUMMARY_LABELS = [
 
 NUMBERED_LEAD = r"第[一二三四五六七八九十]個(趨勢|發現|觀察|重點|反直覺|關鍵)"
 
-CONTRAST_PATTERN = r"不是.{1,15}，是"
+CONTRAST_PATTERN = r"不是.{1,15}?，而?是"
 
 NEGATION_H_TITLE = r"^#{2,6}\s+.*不是"
 
@@ -111,18 +112,78 @@ PUBLIC_JARGON = [
     (r"\bverbatim\b", "原話完整收錄"),
 ]
 
+# 書面成語／連接詞（僅 --public，glossary §3.4）：對外要口語，成語＝書面腔。(pattern, 建議替換)
+# 成語化是書面 vs 口語第一層 slop。
+WRITTEN_IDIOM = [
+    (r"大同小異", "口語：差不多 / 都那幾樣"),
+    (r"不外乎", "口語：不就是 / 大概就是"),
+]
+
+# slop 抽象名詞「X感」（僅 --public，glossary §3.4）：空泛名詞＝AI slop（抽象 vs 具體第二層）。
+# 明列黑名單而非 `.感` 萬用正則 → 天生不誤殺語感／質感／口感／手感等合法詞。還原成具體場景/動作。
+SLOP_ABSTRACT_NOUNS = [
+    "信任感",
+    "安全感",
+    "存在感",
+    "儀式感",
+    "參與感",
+    "獲得感",
+    "歸屬感",
+    "幸福感",
+]
+
+# 對外短訊分號（僅 audience: external + type: client-message，glossary §1.1.1）：
+# 訊息用句號斷句更像真人，分號＝書面腔。對外長文用分號列舉合理，故以 frontmatter 精準 gate、不擋長文。
+MESSAGE_SEMICOLON = "；"
+
 # 結論引導／雜訊框架詞 (writing-harness S1)
-# 高精度子集：只收低誤報的定型句與句首雜訊詞；模糊的「很+評價詞」交 S2 人判
+# 高精度子集：只收低誤報的定型句與句首雜訊詞；模糊的「很+評價詞」交 S1.5/S2 判
+#
+# 自蒸餾棘輪：寫死的核心集是 bootstrap 高精度子集；可演化層由 noise-learned.json 注入——
+# 對候選詞累積信度達標、且過誤報 gate 的詞才晉升。每次人判 catch 下沉一個詞，
+# 機械層覆蓋率上升、後面幾站重複判斷的成本衰減。
+_EMPHASIS = "很|蠻|挺|超|超級|非常|相當|十分|有夠|頗|還挺|還蠻|更|最|特別"
+# 笛卡爾積 強調詞 × 評價詞 的評價端核心集；learned.eval_adjectives 追加進來
+_EVAL_ADJ_CORE = ["直覺", "有用", "實用", "好用", "厲害", "強大", "神奇", "驚人", "巧妙", "精彩"]
+
+_LEARNED_PATH = Path(__file__).parent / "noise-learned.json"
+
+
+def load_learned():
+    """讀自蒸餾棘輪晉升的詞表；檔不存在或壞檔則回空（向後相容，不擋既有檢查）。"""
+    try:
+        data = json.loads(_LEARNED_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"fixed_phrases": [], "eval_adjectives": []}
+    data.setdefault("fixed_phrases", [])
+    data.setdefault("eval_adjectives", [])
+    return data
+
+
+def build_eval_pattern(eval_adjs):
+    """組「強調詞 × 評價詞」笛卡爾積 regex（check 與棘輪工具共用，確保 gate 一致）。"""
+    return rf"(?:{_EMPHASIS})不?(?:{'|'.join(eval_adjs)})"
+
+
+_LEARNED = load_learned()
+
 CONCLUSION_LEAD_NOISE = [
     r"(?:^|[。！？；])\s*(其實|老實說|坦白說|坦白講|說真的|講真的|我記得|不得不說|怎麼說呢)",
     r"理由很[一-鿿]",
     r"問題就?出在",
     r"真正(難|值錢|重要|關鍵)的",
+    r"差很[多大]",  # C-03 評價替代量化（2026-06-22 入庫）
+    r"最(?:快|好|準|簡單|方便)的(?:方式|做法|方法)",  # 排他效率斷言未量化（2026-07-04 入庫，S1.5 自蒸餾）；「最新版本」等事實用法不在此型
+
     r"說穿了",
     r"歸根究[底柢]",
     r"這正?是重點",
     r"值得(注意|一提)的是",
     r"又[一-鿿]{1,3}又[一-鿿]{1,3}",
+    # 「強調詞+空評價詞」族＝替讀者下判斷＝AI 味。模糊者刻意留 S2，
+    # 新戰犯經棘輪累積信度＋誤報 gate 後自動下沉到 _EVAL_ADJ。
+    build_eval_pattern(_EVAL_ADJ_CORE + _LEARNED["eval_adjectives"]),
+    *_LEARNED["fixed_phrases"],
 ]
 
 # 半形標點全形化檢查 — 中文上下文不可用半形 , : ? ( ) ; !
@@ -140,6 +201,22 @@ def strip_frontmatter(content):
         if len(parts) == 2:
             return parts[1]
     return content
+
+
+def parse_frontmatter(content):
+    """輕量解析 frontmatter 的 `key: value`（不依賴 yaml）；無 frontmatter 回 {}。
+    僅供 gate 判定（audience / type）用，不求完整 yaml 語意。"""
+    if not content.startswith("---\n"):
+        return {}
+    parts = content.split("\n---\n", 1)
+    if len(parts) != 2:
+        return {}
+    fm = {}
+    for line in parts[0].splitlines()[1:]:
+        m = re.match(r"\s*([A-Za-z_]+)\s*:\s*(.+?)\s*$", line)
+        if m:
+            fm[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+    return fm
 
 
 def find_all_with_line(body, pattern, flags=0):
@@ -211,6 +288,35 @@ def check_public_jargon(body):
     return hits
 
 
+def check_written_idiom(body):
+    """書面成語／連接詞（僅 --public）：命中標出 + 建議口語。"""
+    hits = []
+    for pat, repl in WRITTEN_IDIOM:
+        for ln, text in find_all_with_line(body, pat):
+            hits.append((ln, f"{text} → 改{repl}"))
+    return hits
+
+
+def check_slop_abstract_nouns(body):
+    """slop 抽象名詞「X感」（僅 --public）：明列黑名單，還原成具體場景/動作。"""
+    hits = []
+    for word in SLOP_ABSTRACT_NOUNS:
+        for ln, text in find_all_with_line(body, re.escape(word)):
+            hits.append((ln, f"{text} → 還原成具體場景/動作（誰、會做什麼）"))
+    return hits
+
+
+def check_message_semicolon(body):
+    """對外短訊分號（僅 external + client-message）：分號改句號斷句。
+    清掉 code fence / inline code 後找全形「；」。"""
+    cleaned = CODE_FENCE_RE.sub(lambda m: " " * len(m.group(0)), body)
+    cleaned = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), cleaned)
+    hits = []
+    for ln, text in find_all_with_line(cleaned, MESSAGE_SEMICOLON):
+        hits.append((ln, f"{text} → 改句號斷句（訊息少用分號）"))
+    return hits
+
+
 def check_conclusion_lead_noise(body):
     hits = []
     for pattern in CONCLUSION_LEAD_NOISE:
@@ -260,7 +366,7 @@ def fmt_hits(hits, limit=10):
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    public = "--public" in sys.argv  # 對外模式：多跑「對外工程黑話」紅燈檢查
+    public = "--public" in sys.argv  # 對外模式：多跑「對外工程黑話」等紅燈檢查
     if len(args) != 1:
         print("Usage: taiwan-style-check.py <file.md> [--public]", file=sys.stderr)
         return 2
@@ -272,6 +378,8 @@ def main():
 
     content = path.read_text(encoding="utf-8")
     body = strip_frontmatter(content)
+    fm = parse_frontmatter(content)
+    is_client_msg = fm.get("audience", "").startswith("external") and "client-message" in fm.get("type", "")
 
     results = {
         "英文技術詞密度": check_english(body),
@@ -287,6 +395,10 @@ def main():
     }
     if public:
         results["對外工程黑話（--public，glossary §3.3）"] = check_public_jargon(body)
+        results["書面成語／連接詞（--public，glossary §3.4）"] = check_written_idiom(body)
+        results["slop 抽象名詞「X感」（--public，glossary §3.4）"] = check_slop_abstract_nouns(body)
+    if is_client_msg:
+        results["對外短訊分號（；，client-message）"] = check_message_semicolon(body)
 
     contrast_count, contrast_hits = check_contrast(body)
     any_hit = any(hits for hits in results.values()) or contrast_count > 2
