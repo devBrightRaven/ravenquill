@@ -8,8 +8,7 @@ Scans style hard rules, outputs Markdown report to stdout.
 Usage:
     python taiwan-style-check.py <file.md> [--public]
 
-Rule sync: rules here mirror methodology/taiwan-writing-glossary.md §6 and the
-"conclusion-lead / noise-frame" section of methodology/writing-harness.md S1.
+Rule sync: rules here mirror methodology/taiwan-writing-glossary.md §6.
 When the glossary/harness gains a regex-able rule, add the matching check
 function here. Verb audit (glossary §2.2) is context-dependent and intentionally
 left to LLM self-comparison against the glossary table, not regex.
@@ -51,7 +50,6 @@ URGENCY_WORDS = [
     "該停下來看",
     "值得重視",
     "不可不知",
-    "不得不",
     "你必須",
     "建議先收藏",
     "再不學就來不及",
@@ -112,11 +110,6 @@ PUBLIC_JARGON = [
 # 訊息用句號斷句更像真人，分號＝書面腔。對外長文用分號列舉合理，故以 frontmatter 精準 gate、不擋長文。
 MESSAGE_SEMICOLON = "；"
 
-# 句首雜訊詞 (writing-harness S1)
-CONCLUSION_LEAD_NOISE = [
-    r"(?:^|[。！？；])\s*(其實|老實說|坦白說|坦白講|說真的|講真的|我記得|不得不說|怎麼說呢|說穿了|歸根究[底柢]|值得注意的是)",
-]
-
 AI_TOOL_RESIDUE = [
     r"[?&](?:utm_source=(?:chatgpt\.com|openai)|referrer=grok\.com)(?=&|#|\s|[，。；！？)]|$)",
     r"(?<![A-Za-z0-9_])(?:turn\d+(?:search|news|fetch|view)\d+|cite(?:turn\d+\w*\d+))(?![A-Za-z0-9_])",
@@ -124,11 +117,6 @@ AI_TOOL_RESIDUE = [
 
 # 半形標點全形化檢查 — 中文上下文不可用半形 , : ? ( ) ; !
 URL_RE = re.compile(r"https?://\S+")
-CODE_FENCE_RE = re.compile(r"(?ms)^(?P<fence>`{3,}|~{3,})[^\n]*\n.*?^(?P=fence)\s*$")
-INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
-INDENTED_CODE_RE = re.compile(r"(?m)^(?: {4}|\t).*$")
-BLOCKQUOTE_RE = re.compile(r"(?m)^ {0,3}>.*$")
-QUOTED_SPEECH_RE = re.compile(r"「[^」]*」|『[^』]*』|“[^”]*”|\"[^\"\n]*\"", re.DOTALL)
 # CJK 統一表意 + 中文標點 + 全形區
 CJK_RE = re.compile(r"[一-鿿　-〿＀-￯]")
 HALF_PUNCT = set(",:?();!")
@@ -149,10 +137,91 @@ def configure_output():
 
 
 def mask_non_prose(body):
-    cleaned = body
-    for pattern in (CODE_FENCE_RE, INLINE_CODE_RE, INDENTED_CODE_RE, BLOCKQUOTE_RE, QUOTED_SPEECH_RE):
-        cleaned = pattern.sub(lambda m: " " * len(m.group(0)), cleaned)
-    return cleaned
+    """Mask Markdown/code/quoted material without changing line positions."""
+    output = []
+    fence_char = None
+    fence_length = 0
+    indented_block = False
+    previous_blank = True
+
+    for raw_line in body.splitlines(keepends=True):
+        newline = "\n" if raw_line.endswith("\n") else ""
+        line = raw_line[:-1] if newline else raw_line
+        if line.endswith("\r"):
+            line, newline = line[:-1], "\r" + newline
+
+        fence = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if fence_char:
+            close = re.match(rf"^ {{0,3}}{re.escape(fence_char)}{{{fence_length},}}\s*$", line)
+            output.append(" " * len(line) + newline)
+            if close:
+                fence_char = None
+            previous_blank = not line.strip()
+            continue
+        if fence:
+            run = fence.group(1)
+            fence_char, fence_length = run[0], len(run)
+            output.append(" " * len(line) + newline)
+            previous_blank = False
+            continue
+
+        is_indented = line.startswith("    ") or line.startswith("\t")
+        if is_indented and (indented_block or previous_blank):
+            indented_block = True
+            output.append(" " * len(line) + newline)
+            previous_blank = False
+            continue
+        if not is_indented:
+            indented_block = False
+        if re.match(r"^ {0,3}>", line):
+            output.append(" " * len(line) + newline)
+            previous_blank = False
+            continue
+
+        chars = list(line)
+        spans = []
+        index = 0
+        while index < len(line):
+            if line[index] == "`":
+                run = len(line[index:]) - len(line[index:].lstrip("`"))
+                close = index + run
+                while close < len(line):
+                    if line[close] != "`":
+                        close += 1
+                        continue
+                    close_run = len(line[close:]) - len(line[close:].lstrip("`"))
+                    if close_run == run:
+                        spans.append((index, close + run))
+                        index = close + run
+                        break
+                    close += close_run
+                else:
+                    index += run
+                continue
+            pairs = {"「": "」", "『": "』", "“": "”"}
+            if line[index] in pairs:
+                close = line.find(pairs[line[index]], index + 1)
+                if close >= 0:
+                    spans.append((index, close + 1))
+                    index = close + 1
+                    continue
+            if line[index] == '"':
+                close = index + 1
+                while close < len(line):
+                    if line[close] == '"' and (close == 0 or line[close - 1] != "\\"):
+                        spans.append((index, close + 1))
+                        index = close + 1
+                        break
+                    close += 1
+                else:
+                    index += 1
+                continue
+            index += 1
+        for start, end in spans:
+            chars[start:end] = " " * (end - start)
+        output.append("".join(chars) + newline)
+        previous_blank = not line.strip()
+    return "".join(output)
 
 
 def parse_frontmatter(content):
@@ -250,13 +319,6 @@ def check_message_semicolon(body):
     return hits
 
 
-def check_conclusion_lead_noise(body):
-    hits = []
-    for pattern in CONCLUSION_LEAD_NOISE:
-        hits.extend(find_all_with_line(body, pattern))
-    return hits
-
-
 def check_ai_tool_residue(body):
     hits = []
     for pattern in AI_TOOL_RESIDUE:
@@ -268,9 +330,7 @@ def check_halfwidth_punct(body):
     """掃中文上下文中的半形標點（前後 1 字含 CJK 即命中）。
     排除：URL、code fence、inline code、數字夾標點（1,000 / 12:30）。
     """
-    cleaned = body
-    cleaned = CODE_FENCE_RE.sub(lambda m: " " * len(m.group(0)), cleaned)
-    cleaned = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), cleaned)
+    cleaned = mask_non_prose(body)
     cleaned = URL_RE.sub(lambda m: " " * len(m.group(0)), cleaned)
 
     hits = []
@@ -326,16 +386,15 @@ def main():
     is_client_msg = fm.get("audience", "").startswith("external") and "client-message" in fm.get("type", "")
 
     results = {
-        "英文技術詞密度": check_english(body),
-        "小結格式標記": check_summary(body),
-        "段落引導語贅字（第 N 個 X）": check_numbered(body),
-        "否定懸念段落標題": check_negation(body),
-        "破折號漏網": check_dash(body),
+        "英文技術詞密度": check_english(scan_body),
+        "小結格式標記": check_summary(scan_body),
+        "段落引導語贅字（第 N 個 X）": check_numbered(scan_body),
+        "否定懸念段落標題": check_negation(scan_body),
+        "破折號漏網": check_dash(scan_body),
         "開場推銷詞": check_urgency(scan_body),
         "半形標點漏網（中文上下文）": check_halfwidth_punct(body),
         "大陸用語（glossary §2.1）": check_mainland_words(scan_body),
         "API 術語（glossary §3.1）": check_api_terms(scan_body),
-        "結論引導／雜訊框架詞（writing-harness S1）": check_conclusion_lead_noise(scan_body),
         "AI 工具殘留": check_ai_tool_residue(scan_body),
     }
     if public:

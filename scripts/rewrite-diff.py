@@ -55,6 +55,12 @@ STYLE_PATTERNS = {
 }
 
 
+def configure_output():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def strip_frontmatter(content):
     if content.startswith("---\n"):
         parts = content.split("\n---\n", 1)
@@ -82,6 +88,7 @@ def classify_change(old_line, new_line):
 
 
 def main():
+    configure_output()
     if len(sys.argv) != 3:
         print("Usage: rewrite-diff.py <draft.md> <final.md>", file=sys.stderr)
         return 2

@@ -6,18 +6,18 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
-from urllib.parse import unquote_plus
 
 
-AI_TRACKING = {
-    ("utm_source", "chatgpt.com"),
-    ("utm_source", "openai"),
-    ("referrer", "grok.com"),
+AI_TRACKING_SEGMENTS = {
+    "utm_source=chatgpt.com",
+    "utm_source=openai",
+    "referrer=grok.com",
 }
-
-URL_RE = re.compile(r"https?://[^\s<>\"']+")
-URL_TRAILING_PUNCTUATION = ".,;:!?，。；：！？)]}」』"
+URL_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
+URL_BOUNDARY = set(" \t\r\n<>\"'「」『』，。；：！？")
+URL_LEFT_BOUNDARY = URL_BOUNDARY | {"("}
 
 
 def configure_output():
@@ -34,10 +34,7 @@ def strip_ai_tracking(url):
 
     kept = []
     for segment in query.split("&"):
-        raw_key, separator, raw_value = segment.partition("=")
-        key = unquote_plus(raw_key).lower()
-        value = unquote_plus(raw_value).lower() if separator else ""
-        if (key, value) not in AI_TRACKING:
+        if segment not in AI_TRACKING_SEGMENTS:
             kept.append(segment)
 
     cleaned = base + (f"?{'&'.join(kept)}" if kept else "")
@@ -51,42 +48,71 @@ def load_manifest(path):
     items = data.get("items")
     if not isinstance(items, list) or not items:
         raise ValueError("manifest.items must be a non-empty list")
+    seen = set()
     for item in items:
         if not isinstance(item, dict) or not isinstance(item.get("value"), str):
             raise ValueError("each item requires a string value")
+        value = item["value"]
+        if not value:
+            raise ValueError("protected values must not be empty")
+        if value in seen:
+            raise ValueError("protected values must be unique")
+        seen.add(value)
         count = item.get("count")
         if type(count) is not int or count < 1:
             raise ValueError("each item requires a positive integer count")
         cleanup = item.get("allow_ai_tracking_cleanup", False)
         if type(cleanup) is not bool:
             raise ValueError("allow_ai_tracking_cleanup must be a boolean")
-        if cleanup and not item["value"].startswith(("http://", "https://")):
+        if cleanup and not URL_SCHEME_RE.match(value):
             raise ValueError("allow_ai_tracking_cleanup is valid only for a full URL")
     return items
 
 
-def extract_urls(text):
-    return [match.group(0).rstrip(URL_TRAILING_PUNCTUATION) for match in URL_RE.finditer(text)]
+def count_url_literal(text, value):
+    """Count exact URL bytes only when the following character ends the URL token."""
+    count = 0
+    start = 0
+    while True:
+        index = text.find(value, start)
+        if index < 0:
+            return count
+        end = index + len(value)
+        left_ok = index == 0 or text[index - 1] in URL_LEFT_BOUNDARY
+        if left_ok and (end == len(text) or text[end] in URL_BOUNDARY):
+            count += 1
+        elif left_ok and text[end] == ")" and index >= 2 and text[index - 2:index] == "](":
+            # The unmatched final ')' closes a Markdown link destination.
+            count += 1
+        start = index + 1
 
 
 def count_value(text, value):
-    if value.startswith(("http://", "https://")):
-        return extract_urls(text).count(value)
-    if value.isdecimal():
+    if URL_SCHEME_RE.match(value):
+        return count_url_literal(text, value)
+    if re.search(r"\d", value):
         return len(re.findall(rf"(?<!\d){re.escape(value)}(?!\d)", text))
     return text.count(value)
 
 
 def verify(items, before, after):
     failures = []
+    after_expected = Counter()
+    source_for_after = {}
     for item in items:
         value = item["value"]
         expected = item["count"]
         before_count = count_value(before, value)
         after_value = strip_ai_tracking(value) if item.get("allow_ai_tracking_cleanup") else value
+        if before_count != expected:
+            failures.append((value, expected, before_count, after_value, count_value(after, after_value)))
+        after_expected[after_value] += expected
+        source_for_after.setdefault(after_value, value)
+    for after_value, expected in after_expected.items():
         after_count = count_value(after, after_value)
-        if before_count != expected or after_count != expected:
-            failures.append((value, expected, before_count, after_value, after_count))
+        if after_count != expected:
+            value = source_for_after[after_value]
+            failures.append((value, expected, count_value(before, value), after_value, after_count))
     return failures
 
 

@@ -16,7 +16,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import harness_core as core  # noqa: E402
 
 
+def configure_output() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def main() -> None:
+    configure_output()
     try:
         data = json.load(sys.stdin)
     except Exception:

@@ -177,17 +177,11 @@ class TaiwanStyleCheck(unittest.TestCase):
         finally:
             p.unlink(missing_ok=True)
 
-    def test_noise_leads_have_close_flag_and_allow_boundaries(self):
+    def test_noise_leads_remain_human_judgment(self):
         leads = ("其實", "老實說", "坦白說", "坦白講", "說真的", "講真的", "我記得", "不得不說", "怎麼說呢", "說穿了", "歸根究底", "值得注意的是")
         for lead in leads:
-            with self.subTest(lead=lead, direction="flag"):
+            with self.subTest(lead=lead):
                 p = write_tmp(f"{lead}，我們需要重新檢查。\n")
-                try:
-                    self.assertEqual(run(STYLE, p).returncode, 10)
-                finally:
-                    p.unlink(missing_ok=True)
-            with self.subTest(lead=lead, direction="allow"):
-                p = write_tmp(f"受訪者的原話是「{lead}」。\n")
                 try:
                     self.assertEqual(run(STYLE, p).returncode, 0)
                 finally:
@@ -219,8 +213,140 @@ class TaiwanStyleCheck(unittest.TestCase):
                 finally:
                     p.unlink(missing_ok=True)
 
+    def test_stateful_markdown_masking_boundaries_and_line_numbers(self):
+        allowed = (
+            "   ~~~~text\nturn0search0\n~~~~\n",
+            "``text ` nested``\n",
+            "\n    turn0search0\n",
+            '受訪者說 "keep \\"turn0search0\\" here"。\n',
+        )
+        for text in allowed:
+            with self.subTest(text=text):
+                p = write_tmp(text)
+                try:
+                    self.assertEqual(run(STYLE, p).returncode, 0)
+                finally:
+                    p.unlink(missing_ok=True)
+
+        list_continuation = write_tmp("1. 說明\n    turn0search0\n")
+        numbered_line = write_tmp("```\nturn0search0\n```\n乾淨。\nturn9search8\n")
+        try:
+            self.assertEqual(run(STYLE, list_continuation).returncode, 10)
+            result = run(STYLE, numbered_line)
+            self.assertEqual(result.returncode, 10)
+            self.assertIn("L5", result.stdout)
+            self.assertNotIn("L2", result.stdout)
+        finally:
+            list_continuation.unlink(missing_ok=True)
+            numbered_line.unlink(missing_ok=True)
+
+    def test_touched_style_families_have_close_boundaries(self):
+        cases = (
+            ("ticket", "請處理 ticket。\n", "欄位是 `ticket`。\n", ()),
+            ("summary", "**小結：** 內容。\n", "欄位是 `**小結：**`。\n", ()),
+            ("numbered", "第一個趨勢是改善。\n", "第一個步驟是確認。\n", ()),
+            ("negation", "## 這不是終點\n", "這不是終點。\n", ()),
+            ("dash", "甲——乙。\n", "甲—乙，或輸入 --help；欄位是 `甲——乙`。\n", ()),
+            ("urgency", "你必須現在處理。\n", "原話是「你必須現在處理」。\n", ()),
+            ("api", "我們要做 API call。\n", "欄位是 `API call`。\n", ()),
+            ("half punctuation", "中文,中文。\n", "版本 1,000，句尾可用英文句點.\n", ()),
+        )
+        for name, bad, good, flags in cases:
+            with self.subTest(name=name, direction="flag"):
+                p = write_tmp(bad)
+                try:
+                    self.assertEqual(run(STYLE, p, *flags).returncode, 10)
+                finally:
+                    p.unlink(missing_ok=True)
+            with self.subTest(name=name, direction="allow"):
+                p = write_tmp(good)
+                try:
+                    self.assertEqual(run(STYLE, p, *flags).returncode, 0)
+                finally:
+                    p.unlink(missing_ok=True)
+
+    def test_ambiguous_sentence_leads_are_human_judgment(self):
+        for lead in ("其實", "我記得", "老實說"):
+            with self.subTest(lead=lead):
+                p = write_tmp(f"{lead}，我們需要重新檢查。\n")
+                try:
+                    self.assertEqual(run(STYLE, p).returncode, 0)
+                finally:
+                    p.unlink(missing_ok=True)
+
 
 class ProtectedMaterialCheck(unittest.TestCase):
+    def test_any_digit_bearing_value_uses_digit_boundaries(self):
+        cases = (("8/30", "18/300"), ("500.00", "1500.00"), ("ID500A", "ID1500A"))
+        for value, changed in cases:
+            with self.subTest(value=value):
+                before = write_tmp(value)
+                after = write_tmp(changed)
+                manifest = write_manifest([{"value": value, "count": 1}])
+                try:
+                    self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+                finally:
+                    manifest.unlink(missing_ok=True); before.unlink(missing_ok=True); after.unlink(missing_ok=True)
+
+    def test_url_literal_boundaries_support_markdown_balanced_parentheses_and_bang(self):
+        for url, text in (
+            ("https://example.com/a(b)", "[來源](https://example.com/a(b))"),
+            ("HTTPS://example.com/a!", "來源 HTTPS://example.com/a! 結束"),
+        ):
+            with self.subTest(url=url):
+                before = write_tmp(text); after = write_tmp(text)
+                manifest = write_manifest([{"value": url, "count": 1}])
+                try:
+                    self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 0)
+                finally:
+                    manifest.unlink(missing_ok=True); before.unlink(missing_ok=True); after.unlink(missing_ok=True)
+
+        uppercase = "HTTPS://example.com/Case"
+        manifest = write_manifest([{"value": uppercase, "count": 1}])
+        before = write_tmp(uppercase); after = write_tmp("https://example.com/Case")
+        try:
+            self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+        finally:
+            manifest.unlink(missing_ok=True); before.unlink(missing_ok=True); after.unlink(missing_ok=True)
+
+    def test_manifest_rejects_empty_and_duplicate_values(self):
+        before = write_tmp("x"); after = write_tmp("x")
+        manifests = (
+            [{"value": "", "count": 1}],
+            [{"value": "x", "count": 1}, {"value": "x", "count": 1}],
+        )
+        try:
+            for items in manifests:
+                manifest = write_manifest(items)
+                try:
+                    self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 2)
+                finally:
+                    manifest.unlink(missing_ok=True)
+        finally:
+            before.unlink(missing_ok=True); after.unlink(missing_ok=True)
+
+    def test_cleanup_aggregates_colliding_normalized_urls(self):
+        one = "https://example.com/a?utm_source=chatgpt.com"
+        two = "https://example.com/a?utm_source=openai"
+        manifest = write_manifest([
+            {"value": one, "count": 1, "allow_ai_tracking_cleanup": True},
+            {"value": two, "count": 1, "allow_ai_tracking_cleanup": True},
+        ])
+        before = write_tmp(f"{one}\n{two}\n"); after = write_tmp("https://example.com/a\n")
+        try:
+            self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+        finally:
+            manifest.unlink(missing_ok=True); before.unlink(missing_ok=True); after.unlink(missing_ok=True)
+
+    def test_cleanup_only_accepts_exact_raw_tracking_segments(self):
+        for segment in ("utm_source=ChatGPT.com", "utm_source=chatgpt%2Ecom"):
+            url = f"https://example.com/a?x=1&{segment}"
+            manifest = write_manifest([{"value": url, "count": 1, "allow_ai_tracking_cleanup": True}])
+            before = write_tmp(url); after = write_tmp("https://example.com/a?x=1")
+            try:
+                self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+            finally:
+                manifest.unlink(missing_ok=True); before.unlink(missing_ok=True); after.unlink(missing_ok=True)
     def test_embedded_number_does_not_satisfy_exact_count(self):
         before = write_tmp("票價 500 元。\n")
         after = write_tmp("票價 1500 元。\n")
@@ -237,7 +363,7 @@ class ProtectedMaterialCheck(unittest.TestCase):
         manifest = write_manifest([{"value": url, "count": 1}])
         before = write_tmp(f"來源：{url}\n")
         try:
-            for changed in (f"{url}/extra", f"{url}?added=1"):
+            for changed in (f"{url}/extra", f"{url}?added=1", f"x{url}"):
                 with self.subTest(changed=changed):
                     after = write_tmp(f"來源：{changed}\n")
                     try:
@@ -383,6 +509,10 @@ class CliPortability(unittest.TestCase):
             manifest.unlink(missing_ok=True)
             before.unlink(missing_ok=True)
             after.unlink(missing_ok=True)
+
+        result = run_native(VERBOSITY, BLOATED, "--format=markdown", env={"PYTHONIOENCODING": "cp932"})
+        self.assertEqual(result.returncode, 1, result.stderr.decode("ascii", errors="ignore"))
+        self.assertNotIn(b"UnicodeEncodeError", result.stderr)
 
 
 class VerbosityCheck(unittest.TestCase):

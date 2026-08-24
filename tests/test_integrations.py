@@ -6,6 +6,7 @@ Pure stdlib, no pytest. Run:
 """
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,7 @@ CODEX_HARNESS = INTEGRATIONS / "codex" / "writing-harness-gate.py"
 CODEX_TIER = INTEGRATIONS / "codex" / "output-tier-gate.py"
 HERMES_PLUGIN = INTEGRATIONS / "hermes" / "writing_harness_plugin.py"
 PY = sys.executable
+REWRITE_DIFF = ROOT / "scripts" / "rewrite-diff.py"
 
 sys.path.insert(0, str(INTEGRATIONS))
 import harness_core as core  # noqa: E402
@@ -120,6 +122,31 @@ class CodexAdapter(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         out = json.loads(r.stdout)
         self.assertIn("L3", out["systemMessage"])
+
+    def test_direct_user_facing_clis_are_safe_under_cp932(self):
+        env = {**os.environ, "PYTHONIOENCODING": "cp932"}
+        harness_file = md_under("content")
+        client_file = md_under("clients")
+        payloads = (
+            (CODEX_HARNESS, {"hook_event_name": "PostToolUse", "tool_input": {"file_path": str(harness_file)}}),
+            (CODEX_TIER, {"hook_event_name": "PostToolUse", "tool_input": {"file_path": str(client_file)}}),
+        )
+        for script, payload in payloads:
+            with self.subTest(script=script.name):
+                result = subprocess.run(
+                    [PY, str(script)], input=json.dumps(payload).encode(),
+                    capture_output=True, env=env,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr.decode("ascii", errors="ignore"))
+                self.assertNotIn(b"UnicodeEncodeError", result.stderr)
+
+        draft = md_under("draft", "**小結：** 舊稿。\n")
+        final = md_under("final", "新版。\n")
+        result = subprocess.run(
+            [PY, str(REWRITE_DIFF), str(draft), str(final)], capture_output=True, env=env,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode("ascii", errors="ignore"))
+        self.assertNotIn(b"UnicodeEncodeError", result.stderr)
 
 
 class HermesPlugin(unittest.TestCase):

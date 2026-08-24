@@ -23,7 +23,7 @@ Thanks for wanting to improve Ravenquill. This project has one design principle 
 
 以「新增一個禁用詞」為例：
 
-1. 在 `scripts/taiwan-style-check.py` 對應的常數 list 加一行（例如 `MAINLAND_WORDS`、`URGENCY_WORDS`、`CONCLUSION_LEAD_NOISE`）。
+1. 在 `scripts/taiwan-style-check.py` 對應的常數 list 加一行（例如 `MAINLAND_WORDS`、`URGENCY_WORDS`）。
 2. 如果是新類別，仿照現有的 `check_*` function 寫一個，並在 `main()` 的 `results` dict 掛上。
 3. 在 `examples/bloated-sample.md` 補一行會命中新規則的內容，確認這個測試樣本（fixture）仍會 fail。
 4. 在 `tests/test_harness.py` 補一組配對 case：一個 `should flag`、一個外型相似但合理的 `should allow`。

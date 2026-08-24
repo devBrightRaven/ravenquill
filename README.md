@@ -12,7 +12,7 @@ Ravenquill is a fork of [scandnavik/writing-harness](https://github.com/scandnav
 
 ## 這套系統在解決什麼
 
-LLM 寫中文長文有一組穩定的壞味道：半形標點夾在中文裡、破折號氾濫、大陸用語、「不是 X，是 Y」的二元對比模板、句首「其實／老實說」這類零承載的填充、煞有介事編一個假例子。這些合起來就是 AI slop。
+LLM 寫中文長文常出現半形標點夾在中文裡、破折號氾濫、大陸用語、「不是 X，是 Y」的二元對比模板，以及煞有介事編一個假例子。部分現象可機械檢查；句首語氣詞則保留給人工依語境判斷。
 
 靠 prompt 寫幾條規則擋不住，因為模型會選擇性遵守，而且事後沒有證據能證明它真的做了。這套系統改用「閘」的設計：機械的部分交給程式（exit code 不會說謊），判斷的部分強制留證，新 regex 則要有配對的正反例測試。
 
@@ -86,7 +86,7 @@ python -X utf8 scripts/verbosity-check.py "你的筆記/**/*.md" --format=markdo
 ## 客製到你的語境
 
 - **換語言／地區**：`taiwan-writing-glossary.md` 的 §2 對照表整段換成你那邊的判準（簡中、港繁、純學術書面都行），三站方法論不動。完整 worked example 見 [`examples/glossary-zh-cn.example.md`](examples/glossary-zh-cn.example.md)（把規則分成「通用保留／需翻轉／需調整」三類，附可直接貼的腳本常數）。
-- **改機械規則**：規則都集中在 `scripts/taiwan-style-check.py` 頂部的常數區（大陸用語、禁用句型、雜訊框架詞），加減一行就改了行為。
+- **改機械規則**：規則集中在 `scripts/taiwan-style-check.py` 頂部的常數區（大陸用語與低誤報禁用句型），加減一行就改了行為。
 - **你自己的口吻**：複製 `examples/content-voice-prompt.template.md`，把 `<填你的>` 換成你的範例。這是 S2 判斷「像不像你」要比對的那把尺。
 
 ## Harness 與 checklist 的差別
@@ -104,7 +104,7 @@ checklist 是給人看的承諾，harness 是會執行的系統。差別有三�
 ```
 writing-harness/
 ├─ methodology/        三站方法論 + glossary 規則手冊
-├─ scripts/            3 支純 stdlib 檢查腳本
+├─ scripts/            純 stdlib 檢查腳本
 ├─ hooks/              2 個 Claude Code PostToolUse hook + settings 範例
 ├─ integrations/       接到別的 agent：codex/、hermes/ + 共用核心 harness_core.py
 ├─ skill/tighten/      bloat-busting skill
@@ -122,7 +122,7 @@ python -X utf8 tests/test_harness.py
 
 ## Contributing
 
-歡迎貢獻規則與其他語境的 glossary。核心信條是「閘只升不降」，詳見 [CONTRIBUTING.md](CONTRIBUTING.md)。
+歡迎貢獻規則與其他語境的 glossary。核心信條是「已知風險的測試證據不消失，規則可因反證收窄」，詳見 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## License
 
