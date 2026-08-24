@@ -1,12 +1,12 @@
 # Contributing
 
-Thanks for wanting to improve writing-harness. This project has one design principle that shapes everything: **the rule base only goes up, never down (a ratchet).** Read that before you open a PR.
+Thanks for wanting to improve Ravenquill. This project has one design principle that shapes everything: **regression coverage only goes up (a coverage ratchet).** Read that before you open a PR.
 
-歡迎貢獻。請先理解這套系統唯一的設計信條：**規則庫只升不降（像棘輪，那種只能單向轉、卡住就不會倒退的齒輪）。** 每抓到一個新的壞味道，就把它固化成一道閘，下次再也漏不掉。
+歡迎貢獻。請先理解這套系統唯一的設計信條：**已知風險的測試覆蓋只升不降。** 每抓到一個新的壞味道，留下 `should flag`；每發現一次誤殺，留下 `should allow`。規則可以被反證收窄，測試證據不能消失。
 
 ---
 
-## The ratchet: where does a new rule go?
+## The coverage ratchet: where does a new rule go?
 
 抓到一個 LLM 反覆寫出的壞味道時，先問一個問題：**正則抓得到嗎？**
 
@@ -26,7 +26,7 @@ Thanks for wanting to improve writing-harness. This project has one design princ
 1. 在 `scripts/taiwan-style-check.py` 對應的常數 list 加一行（例如 `MAINLAND_WORDS`、`URGENCY_WORDS`、`CONCLUSION_LEAD_NOISE`）。
 2. 如果是新類別，仿照現有的 `check_*` function 寫一個，並在 `main()` 的 `results` dict 掛上。
 3. 在 `examples/bloated-sample.md` 補一行會命中新規則的內容，確認這個測試樣本（fixture）仍會 fail。
-4. 在 `tests/test_harness.py` 補一個 case（clean 不該命中、bad 應該命中）。
+4. 在 `tests/test_harness.py` 補一組配對 case：一個 `should flag`、一個外型相似但合理的 `should allow`。
 5. 跑 `python tests/test_harness.py`，全綠才送 PR。
 6. 同步更新 `methodology/taiwan-writing-glossary.md`，讓人讀的規則手冊與腳本一致。
 

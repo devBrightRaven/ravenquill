@@ -1,6 +1,8 @@
-# writing-harness
+# Ravenquill
 
-> A quality gate that stops an LLM from shipping "AI slop" in Chinese long-form writing. Three stations: an input gate, a mechanical regex gate, and a human-judgment gate with mandatory self-attestation.
+> Authorship-preserving writing validation for AI agents.
+
+Ravenquill is a fork of [scandnavik/writing-harness](https://github.com/scandnavik/writing-harness). It preserves the upstream MIT license and commit history while adding explicit source-material protection and evidence-backed rule governance.
 
 防 AI Slop 的一套寫作品質閘（AI Slop 指 AI 寫出來那種空泛、堆砌、一看就知道不是人寫的味道）。它把「會不會寫成 AI 腔」這件事，從事後憑感覺修，前移成動筆前、草稿後兩個固定檢查點。方法論、腳本、agent hook 三件一起給，別人 clone 下來就能套用。方法論與腳本跟 agent 無關（任何 agent / 編輯器 / CI 都能跑）；自動提醒的接線 Claude Code、OpenAI Codex CLI、NousResearch Hermes 都有現成版本，見 [`integrations/`](integrations/)。
 
@@ -12,7 +14,7 @@
 
 LLM 寫中文長文有一組穩定的壞味道：半形標點夾在中文裡、破折號氾濫、大陸用語、「不是 X，是 Y」的二元對比模板、句首「其實／老實說」這類零承載的填充、煞有介事編一個假例子。這些合起來就是 AI slop。
 
-靠 prompt 寫幾條規則擋不住，因為模型會選擇性遵守，而且事後沒有證據能證明它真的做了。這套系統改用「閘」的設計：機械的部分交給程式（exit code 不會說謊），判斷的部分強制留證（逐題自答貼回覆），而且規則庫只升不降。
+靠 prompt 寫幾條規則擋不住，因為模型會選擇性遵守，而且事後沒有證據能證明它真的做了。這套系統改用「閘」的設計：機械的部分交給程式（exit code 不會說謊），判斷的部分強制留證，新 regex 則要有配對的正反例測試。
 
 ## 系統三層
 
@@ -23,6 +25,7 @@ LLM 寫中文長文有一組穩定的壞味道：半形標點夾在中文裡、�
 | **機械閘腳本** | `scripts/taiwan-style-check.py` | S1 主閘，掃 11 類硬規則（exit 0／10） |
 | | `scripts/verbosity-check.py` | 掃 10 條 bloat／冗贅 pattern |
 | | `scripts/rewrite-diff.py` | 比對草稿與真人改稿，找出該寫進 glossary 的規則 |
+| | `scripts/protected-material-check.py` | 核對改寫前後的明列原話、數字、日期與 URL |
 | **自動執行 Hook** | `hooks/writing-harness-gate.py` | PostToolUse 自動提醒「這篇還沒過三站」 |
 | | `hooks/output-tier-gate.py` | 對外產出自動提醒附佐證包：來源、抽查、人工複核 |
 | **Skill** | `skill/tighten/SKILL.md` | bloat 偵測加 LLM 重寫管線 |
@@ -31,8 +34,8 @@ LLM 寫中文長文有一組穩定的壞味道：半形標點夾在中文裡、�
 ## 快速安裝
 
 ```bash
-git clone https://github.com/scandnavik/writing-harness.git
-cd writing-harness
+git clone https://github.com/devBrightRaven/ravenquill.git
+cd ravenquill
 
 # macOS / Linux
 ./install.sh
@@ -92,9 +95,9 @@ checklist 是給人看的承諾，harness 是會執行的系統。差別有三�
 
 1. **機械閘是程式，不是承諾**：跑不過就是跑不過，沒得通融。
 2. **判斷閘要留證**：自答結果貼出來，事後可以查核。
-3. **規則庫只升不降**：每次被真人改稿揪出的新壞味道，先問「正則抓得到嗎」，抓得到就往 S1 腳本補一條，抓不到才寫成 S2 的判斷項。
+3. **測試覆蓋只升不降**：每個新規則都要有 should-flag 和 should-not-flag 用例。規則可以因誤報而收窄，已知風險的回歸證據不能消失。
 
-規則庫就這樣單向長大，品質地板只升不降。
+品質地板由配對的正反例維持，不靠無限擴張黑名單。
 
 ## 目錄結構
 
