@@ -112,42 +112,23 @@ PUBLIC_JARGON = [
 # 訊息用句號斷句更像真人，分號＝書面腔。對外長文用分號列舉合理，故以 frontmatter 精準 gate、不擋長文。
 MESSAGE_SEMICOLON = "；"
 
-# 結論引導／雜訊框架詞 (writing-harness S1)
-# 高精度子集：只收低誤報的定型句與句首雜訊詞；模糊的「很+評價詞」交 S2 判斷
-#
-_EMPHASIS = "很|蠻|挺|超|超級|非常|相當|十分|有夠|頗|還挺|還蠻|更|最|特別"
-_EVAL_ADJ_CORE = ["直覺", "有用", "實用", "好用", "厲害", "強大", "神奇", "驚人", "巧妙", "精彩"]
-
-def build_eval_pattern(eval_adjs):
-    """組「強調詞 × 評價詞」regex。"""
-    return rf"(?:{_EMPHASIS})不?(?:{'|'.join(eval_adjs)})"
-
+# 句首雜訊詞 (writing-harness S1)
 CONCLUSION_LEAD_NOISE = [
-    r"(?:^|[。！？；])\s*(其實|老實說|坦白說|坦白講|說真的|講真的|我記得|不得不說|怎麼說呢)",
-    r"理由很[一-鿿]",
-    r"問題就?出在",
-    r"真正(難|值錢|重要|關鍵)的",
-    r"差很[多大]",  # C-03 評價替代量化（2026-06-22 入庫）
-    r"最(?:快|好|準|簡單|方便)的(?:方式|做法|方法)",  # 排他效率斷言未量化；「最新版本」等事實用法不在此型
-
-    r"說穿了",
-    r"歸根究[底柢]",
-    r"這正?是重點",
-    r"值得(注意|一提)的是",
-    r"又[一-鿿]{1,3}又[一-鿿]{1,3}",
-    # 「強調詞+空評價詞」族＝替讀者下判斷＝AI 味。模糊者刻意留 S2，
-    build_eval_pattern(_EVAL_ADJ_CORE),
+    r"(?:^|[。！？；])\s*(其實|老實說|坦白說|坦白講|說真的|講真的|我記得|不得不說|怎麼說呢|說穿了|歸根究[底柢]|值得注意的是)",
 ]
 
 AI_TOOL_RESIDUE = [
     r"[?&](?:utm_source=(?:chatgpt\.com|openai)|referrer=grok\.com)(?=&|#|\s|[，。；！？)]|$)",
-    r"\b(?:turn\d+(?:search|news|fetch|view)\d+|cite(?:turn\d+\w*\d+))\b",
+    r"(?<![A-Za-z0-9_])(?:turn\d+(?:search|news|fetch|view)\d+|cite(?:turn\d+\w*\d+))(?![A-Za-z0-9_])",
 ]
 
 # 半形標點全形化檢查 — 中文上下文不可用半形 , : ? ( ) ; !
 URL_RE = re.compile(r"https?://\S+")
-CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+CODE_FENCE_RE = re.compile(r"(?ms)^(?P<fence>`{3,}|~{3,})[^\n]*\n.*?^(?P=fence)\s*$")
 INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
+INDENTED_CODE_RE = re.compile(r"(?m)^(?: {4}|\t).*$")
+BLOCKQUOTE_RE = re.compile(r"(?m)^ {0,3}>.*$")
+QUOTED_SPEECH_RE = re.compile(r"「[^」]*」|『[^』]*』|“[^”]*”|\"[^\"\n]*\"", re.DOTALL)
 # CJK 統一表意 + 中文標點 + 全形區
 CJK_RE = re.compile(r"[一-鿿　-〿＀-￯]")
 HALF_PUNCT = set(",:?();!")
@@ -159,6 +140,19 @@ def strip_frontmatter(content):
         if len(parts) == 2:
             return parts[1]
     return content
+
+
+def configure_output():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
+def mask_non_prose(body):
+    cleaned = body
+    for pattern in (CODE_FENCE_RE, INLINE_CODE_RE, INDENTED_CODE_RE, BLOCKQUOTE_RE, QUOTED_SPEECH_RE):
+        cleaned = pattern.sub(lambda m: " " * len(m.group(0)), cleaned)
+    return cleaned
 
 
 def parse_frontmatter(content):
@@ -249,8 +243,7 @@ def check_public_jargon(body):
 def check_message_semicolon(body):
     """對外短訊分號（僅 external + client-message）：分號改句號斷句。
     清掉 code fence / inline code 後找全形「；」。"""
-    cleaned = CODE_FENCE_RE.sub(lambda m: " " * len(m.group(0)), body)
-    cleaned = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), cleaned)
+    cleaned = mask_non_prose(body)
     hits = []
     for ln, text in find_all_with_line(cleaned, MESSAGE_SEMICOLON):
         hits.append((ln, f"{text} → 改句號斷句（訊息少用分號）"))
@@ -312,6 +305,7 @@ def fmt_hits(hits, limit=10):
 
 
 def main():
+    configure_output()
     parser = argparse.ArgumentParser(
         description="Check Taiwan-style hard rules in a Markdown file."
     )
@@ -327,14 +321,7 @@ def main():
 
     content = path.read_text(encoding="utf-8")
     body = strip_frontmatter(content)
-    tool_scan_body = CODE_FENCE_RE.sub(lambda m: " " * len(m.group(0)), body)
-    tool_scan_body = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), tool_scan_body)
-    tool_scan_body = re.sub(
-        r"「[^」]*」|『[^』]*』|“[^”]*”",
-        lambda m: " " * len(m.group(0)),
-        tool_scan_body,
-        flags=re.DOTALL,
-    )
+    scan_body = mask_non_prose(body)
     fm = parse_frontmatter(content)
     is_client_msg = fm.get("audience", "").startswith("external") and "client-message" in fm.get("type", "")
 
@@ -344,19 +331,19 @@ def main():
         "段落引導語贅字（第 N 個 X）": check_numbered(body),
         "否定懸念段落標題": check_negation(body),
         "破折號漏網": check_dash(body),
-        "開場推銷詞": check_urgency(body),
+        "開場推銷詞": check_urgency(scan_body),
         "半形標點漏網（中文上下文）": check_halfwidth_punct(body),
-        "大陸用語（glossary §2.1）": check_mainland_words(body),
-        "API 術語（glossary §3.1）": check_api_terms(body),
-        "結論引導／雜訊框架詞（writing-harness S1）": check_conclusion_lead_noise(body),
-        "AI 工具殘留": check_ai_tool_residue(tool_scan_body),
+        "大陸用語（glossary §2.1）": check_mainland_words(scan_body),
+        "API 術語（glossary §3.1）": check_api_terms(scan_body),
+        "結論引導／雜訊框架詞（writing-harness S1）": check_conclusion_lead_noise(scan_body),
+        "AI 工具殘留": check_ai_tool_residue(scan_body),
     }
     if public:
-        results["對外工程黑話（--public，glossary §3.3）"] = check_public_jargon(body)
+        results["對外工程黑話（--public，glossary §3.3）"] = check_public_jargon(scan_body)
     if is_client_msg:
         results["對外短訊分號（；，client-message）"] = check_message_semicolon(body)
 
-    contrast_count, contrast_hits = check_contrast(body)
+    contrast_count, contrast_hits = check_contrast(scan_body)
     any_hit = any(hits for hits in results.values()) or contrast_count > 2
 
     print(f"# 台灣口語硬規則檢查 — `{path.name}`\n")

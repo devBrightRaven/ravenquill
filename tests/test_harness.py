@@ -6,6 +6,7 @@ Run:
 Exit 0 = all pass, 1 = a test failed.
 """
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,14 @@ def run(script, *args):
     return subprocess.run(
         [PY, "-X", "utf8", str(script), *map(str, args)],
         capture_output=True, text=True, encoding="utf-8",
+    )
+
+
+def run_native(script, *args, env=None):
+    return subprocess.run(
+        [PY, str(script), *map(str, args)],
+        capture_output=True,
+        env={**os.environ, **(env or {})},
     )
 
 
@@ -81,17 +90,12 @@ class TaiwanStyleCheck(unittest.TestCase):
                     p.unlink(missing_ok=True)
 
     def test_mainland_terms_have_paired_flag_and_allow_cases(self):
-        cases = (
-            ("視頻", "影片"), ("視頻號", "短影音帳號"), ("公眾號", "粉專"),
-            ("在線", "線上"), ("網絡", "網路"), ("互聯網", "網路"),
-            ("批量", "批次"), ("軟件", "軟體"), ("信息", "資訊"),
-            ("默認", "預設"), ("鏈接", "連結"), ("範式轉換", "典範轉移"),
-            ("屏幕", "螢幕"), ("硬盤", "硬碟"), ("硬件", "硬體"),
-            ("服務器", "伺服器"), ("登錄", "登入"), ("操作系統", "作業系統"),
-            ("數碼", "數位"), ("攝像頭", "視訊鏡頭"), ("賦能", "強化能力"),
-            ("復盤", "事後回顧"), ("對標", "對照"), ("抓手", "切入點"),
+        terms = (
+            "視頻", "視頻號", "公眾號", "在線", "網絡", "互聯網", "批量", "軟件",
+            "信息", "默認", "鏈接", "範式轉換", "屏幕", "硬盤", "硬件", "服務器",
+            "登錄", "操作系統", "數碼", "攝像頭", "賦能", "復盤", "對標", "抓手",
         )
-        for blocked, allowed in cases:
+        for blocked in terms:
             with self.subTest(term=blocked, direction="flag"):
                 p = write_tmp(f"這次使用{blocked}。\n")
                 try:
@@ -99,27 +103,23 @@ class TaiwanStyleCheck(unittest.TestCase):
                 finally:
                     p.unlink(missing_ok=True)
             with self.subTest(term=blocked, direction="allow"):
-                p = write_tmp(f"這次使用{allowed}。\n")
+                p = write_tmp(f"原始欄位值是 `{blocked}`。\n")
                 try:
                     self.assertEqual(run(STYLE, p).returncode, 0)
                 finally:
                     p.unlink(missing_ok=True)
 
     def test_public_jargon_has_paired_flag_and_allow_cases(self):
-        cases = (
-            ("這條規則機械可檢。\n", "這條規則電腦抓得到。\n"),
-            ("這是 false positive。\n", "這是誤報。\n"),
-            ("請 verbatim 保留。\n", "請完整保留原話。\n"),
-        )
-        for blocked, allowed in cases:
-            with self.subTest(text=blocked, direction="flag"):
-                p = write_tmp(blocked)
+        terms = ("機械可檢", "false positive", "verbatim")
+        for term in terms:
+            with self.subTest(text=term, direction="flag"):
+                p = write_tmp(f"對外文字不要寫 {term}。\n")
                 try:
                     self.assertEqual(run(STYLE, p, "--public").returncode, 10)
                 finally:
                     p.unlink(missing_ok=True)
-            with self.subTest(text=blocked, direction="allow"):
-                p = write_tmp(allowed)
+            with self.subTest(text=term, direction="allow"):
+                p = write_tmp(f"範例欄位是 `{term}`。\n")
                 try:
                     self.assertEqual(run(STYLE, p, "--public").returncode, 0)
                 finally:
@@ -127,7 +127,7 @@ class TaiwanStyleCheck(unittest.TestCase):
 
     def test_contrast_regex_has_flag_and_allow_boundaries(self):
         flagged = write_tmp("不是甲，是乙。\n不是丙，而是丁。\n不是戊，是己。\n")
-        allowed = write_tmp("不是甲，是乙。\n不是丙，而是丁。\n")
+        allowed = write_tmp("不是甲，是乙。\n原話是「不是丙，而是丁」。\n`不是戊，是己`。\n")
         try:
             self.assertEqual(run(STYLE, flagged).returncode, 10)
             self.assertEqual(run(STYLE, allowed).returncode, 0)
@@ -137,7 +137,7 @@ class TaiwanStyleCheck(unittest.TestCase):
 
     def test_client_message_semicolon_is_scoped_by_frontmatter(self):
         flagged = write_tmp("---\naudience: external\ntype: client-message\n---\n先確認需求；再回覆。\n")
-        allowed = write_tmp("---\naudience: external\ntype: article\n---\n先確認需求；再回覆。\n")
+        allowed = write_tmp("---\naudience: external\ntype: client-message\n---\n指令範例是 `a；b`。\n")
         try:
             self.assertEqual(run(STYLE, flagged).returncode, 10)
             self.assertEqual(run(STYLE, allowed).returncode, 0)
@@ -177,19 +177,33 @@ class TaiwanStyleCheck(unittest.TestCase):
         finally:
             p.unlink(missing_ok=True)
 
-    def test_noise_frame_fails(self):
-        p = write_tmp("其實這件事很簡單。\n")
-        try:
-            r = run(STYLE, p)
-            self.assertEqual(r.returncode, 10, r.stdout)
-        finally:
-            p.unlink(missing_ok=True)
+    def test_noise_leads_have_close_flag_and_allow_boundaries(self):
+        leads = ("其實", "老實說", "坦白說", "坦白講", "說真的", "講真的", "我記得", "不得不說", "怎麼說呢", "說穿了", "歸根究底", "值得注意的是")
+        for lead in leads:
+            with self.subTest(lead=lead, direction="flag"):
+                p = write_tmp(f"{lead}，我們需要重新檢查。\n")
+                try:
+                    self.assertEqual(run(STYLE, p).returncode, 10)
+                finally:
+                    p.unlink(missing_ok=True)
+            with self.subTest(lead=lead, direction="allow"):
+                p = write_tmp(f"受訪者的原話是「{lead}」。\n")
+                try:
+                    self.assertEqual(run(STYLE, p).returncode, 0)
+                finally:
+                    p.unlink(missing_ok=True)
 
     def test_ai_residue_has_flag_and_allow_cases(self):
         cases = (
             ("tracking parameter", "來源：https://example.com/post?utm_source=chatgpt.com。\n", "來源：https://example.com/post。\n"),
             ("citation residue", "來源代碼是 turn0search0。\n", "範例程式是 `turn0search0`。\n"),
             ("quoted citation residue", "來源代碼是 turn0search0。\n", "受訪者說：「請保留 turn0search0。」\n"),
+            ("CJK-adjacent residue", "來源turn0search0可查。\n", "來源turn0search0x可查。\n"),
+            ("tilde fence", "來源 turn0search0。\n", "~~~text\nturn0search0\n~~~\n"),
+            ("indented code", "來源 turn0search0。\n", "    turn0search0\n"),
+            ("blockquote", "來源 turn0search0。\n", "> 來源 turn0search0。\n"),
+            ("ASCII quote", "來源 turn0search0。\n", '受訪者說「"turn0search0"」。\n'),
+            ("curly quote", "來源 turn0search0。\n", "受訪者說：“turn0search0”。\n"),
         )
         for name, bad, allowed in cases:
             with self.subTest(name=name, direction="flag"):
@@ -207,6 +221,83 @@ class TaiwanStyleCheck(unittest.TestCase):
 
 
 class ProtectedMaterialCheck(unittest.TestCase):
+    def test_embedded_number_does_not_satisfy_exact_count(self):
+        before = write_tmp("票價 500 元。\n")
+        after = write_tmp("票價 1500 元。\n")
+        manifest = write_manifest([{"value": "500", "count": 1}])
+        try:
+            self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+        finally:
+            manifest.unlink(missing_ok=True)
+            before.unlink(missing_ok=True)
+            after.unlink(missing_ok=True)
+
+    def test_complete_url_token_rejects_suffix_or_query_addition(self):
+        url = "https://example.com/a"
+        manifest = write_manifest([{"value": url, "count": 1}])
+        before = write_tmp(f"來源：{url}\n")
+        try:
+            for changed in (f"{url}/extra", f"{url}?added=1"):
+                with self.subTest(changed=changed):
+                    after = write_tmp(f"來源：{changed}\n")
+                    try:
+                        self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+                    finally:
+                        after.unlink(missing_ok=True)
+        finally:
+            manifest.unlink(missing_ok=True)
+            before.unlink(missing_ok=True)
+
+    def test_tracking_cleanup_rejects_any_other_url_change(self):
+        old_url = "https://example.com/a?x=1&tag=one&tag=two&utm_source=chatgpt.com&label=a%20b#part"
+        manifest = write_manifest([{"value": old_url, "count": 1, "allow_ai_tracking_cleanup": True}])
+        before = write_tmp(f"來源：{old_url}\n")
+        changed_urls = (
+            "https://example.com/a?tag=one&tag=two&x=1&label=a%20b#part",
+            "https://example.com/a?x=1&tag=one&tag=two&label=a+b#part",
+            "https://example.com/a?x=1&tag=one&label=a%20b#part",
+            "https://example.com/a?x=1&tag=one&tag=two&label=a%20b#other",
+        )
+        try:
+            for changed in changed_urls:
+                with self.subTest(changed=changed):
+                    after = write_tmp(f"來源：{changed}\n")
+                    try:
+                        self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+                    finally:
+                        after.unlink(missing_ok=True)
+        finally:
+            manifest.unlink(missing_ok=True)
+            before.unlink(missing_ok=True)
+
+    def test_malformed_manifests_exit_two_without_traceback(self):
+        before = write_tmp("原文。\n")
+        after = write_tmp("原文。\n")
+        manifests = (
+            "[]",
+            '{"items":[{"value":"x","count":true}]}',
+            '{"items":[{"value":"https://example.com","count":1,"allow_ai_tracking_cleanup":"yes"}]}',
+            "{not-json",
+        )
+        try:
+            for raw in manifests:
+                with self.subTest(raw=raw):
+                    manifest = write_tmp(raw)
+                    try:
+                        result = run(PROTECTED, manifest, before, after)
+                        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                        self.assertNotIn("Traceback", result.stderr)
+                    finally:
+                        manifest.unlink(missing_ok=True)
+        finally:
+            before.unlink(missing_ok=True)
+            after.unlink(missing_ok=True)
+
+    def test_unknown_option_fails_clearly(self):
+        result = run(PROTECTED, "manifest.json", "before.md", "after.md", "--manfiest")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn("--manfiest", result.stderr)
+
     def test_exact_protected_material_passes(self):
         before = write_tmp(
             "8/30 的票價是 500 元。詳見 [活動頁](https://example.com/a)。\n"
@@ -266,6 +357,29 @@ class ProtectedMaterialCheck(unittest.TestCase):
         try:
             self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 0)
         finally:
+            manifest.unlink(missing_ok=True)
+            before.unlink(missing_ok=True)
+            after.unlink(missing_ok=True)
+
+
+class CliPortability(unittest.TestCase):
+    def test_user_facing_clis_do_not_crash_under_cp932_output(self):
+        article = write_tmp("這裡用了破折號——這就違規了。\n")
+        before = write_tmp("票價 500 元。\n")
+        after = write_tmp("票價 550 元。\n")
+        manifest = write_manifest([{"value": "500", "count": 1}])
+        try:
+            commands = (
+                (STYLE, (article,)),
+                (PROTECTED, (manifest, before, after)),
+            )
+            for script, args in commands:
+                with self.subTest(script=script.name):
+                    result = run_native(script, *args, env={"PYTHONIOENCODING": "cp932"})
+                    self.assertEqual(result.returncode, 10, result.stderr.decode("ascii", errors="ignore"))
+                    self.assertNotIn(b"UnicodeEncodeError", result.stderr)
+        finally:
+            article.unlink(missing_ok=True)
             manifest.unlink(missing_ok=True)
             before.unlink(missing_ok=True)
             after.unlink(missing_ok=True)

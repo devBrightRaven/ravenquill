@@ -22,7 +22,7 @@ LLM 寫中文長文有一組穩定的壞味道：半形標點夾在中文裡、�
 |---|---|---|
 | **方法論** | `methodology/writing-harness.md` | S0 輸入閘 / S1 機械閘 / S2 判斷閘，三站本體 |
 | | `methodology/taiwan-writing-glossary.md` | 規則手冊：標點、大陸→台灣用字、句型、術語白話化 |
-| **機械閘腳本** | `scripts/taiwan-style-check.py` | S1 主閘，掃 11 類硬規則（exit 0／10） |
+| **機械閘腳本** | `scripts/taiwan-style-check.py` | S1 主閘，掃描台灣用字、標點、句型與 AI 殘留（exit 0／10） |
 | | `scripts/verbosity-check.py` | 掃 10 條 bloat／冗贅 pattern |
 | | `scripts/rewrite-diff.py` | 比對草稿與真人改稿，找出該寫進 glossary 的規則 |
 | | `scripts/protected-material-check.py` | 核對改寫前後的明列原話、數字、日期與 URL |
@@ -51,7 +51,7 @@ cd ravenquill
 ### 1. 跑機械閘（不裝任何東西就能用）
 
 ```bash
-python scripts/taiwan-style-check.py 你的文章.md
+python -X utf8 scripts/taiwan-style-check.py 你的文章.md
 ```
 
 exit 0 代表過；exit 10 會列出每一條命中與行號。這支腳本零依賴、純 stdlib，任何編輯器、任何 agent、CI 都能接。
@@ -63,7 +63,7 @@ exit 0 代表過；exit 10 會列出每一條命中與行號。這支腳本零�
 ### 3. 砍冗贅
 
 ```bash
-python scripts/verbosity-check.py "你的筆記/**/*.md" --format=markdown
+python -X utf8 scripts/verbosity-check.py "你的筆記/**/*.md" --format=markdown
 ```
 
 偵測歸偵測，重寫交給 `skill/tighten/` 那支 skill 派 LLM 做（偵測零 LLM token，只有重寫才花）。
@@ -117,7 +117,7 @@ writing-harness/
 ## 測試
 
 ```bash
-python tests/test_harness.py
+python -X utf8 tests/test_harness.py
 ```
 
 ## Contributing

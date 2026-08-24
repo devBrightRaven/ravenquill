@@ -17,7 +17,15 @@
 
 ## S0 輸入閘（動筆前，最高槓桿）
 
-寫之前先記錄目標場景：`social`／`newsletter`／`sales`／`customer-service`／`office-report`／`general`。接著問：這篇要不要**真實場景／案例／引述對白／數字**？
+寫之前先記錄：
+
+- `scene`：`social`／`newsletter`／`sales`／`customer-service`／`office-report`／`general`
+- `edit_authority`：`review-only`／`propose`／`apply`
+- `surface_scope`：本次允許檢視或修改的檔案、段落、欄位或輸出面
+
+`review-only` 禁止寫入；`propose` 只能提供候選修改；`apply` 只能在 `surface_scope` 內寫入。人類保留最終採用、拒絕與發布決定。
+
+接著問：這篇要不要**真實場景／案例／引述對白／數字**？
 
 - 要 → 有沒有可用的真實（可匿名）素材？
   - 有 → 進 S1 區的撰寫
@@ -33,7 +41,7 @@
 ## S1 機械閘（草稿後，純腳本 0 LLM）
 
 ```
-python ~/.claude/skills/writing-harness/scripts/taiwan-style-check.py <file.md> [--public]
+python -X utf8 scripts/taiwan-style-check.py <file.md> [--public]
 ```
 
 exit 0 才算過（exit 0 是程式回報「全部通過」的慣例，非 0 代表有命中）。它掃這幾類：
@@ -41,7 +49,7 @@ exit 0 才算過（exit 0 是程式回報「全部通過」的慣例，非 0 代
 - 破折號、半形標點夾在中文裡
 - 大陸用語、把 API 術語直接丟給讀者
 - 開場推銷詞、「不是 X 是 Y」這種對比句型在同一篇用超過 2 次
-- **雜訊框架詞**：講到一半冒出來、卻沒帶任何資訊的填充語。例如「理由很 X」「問題出在」「真正難／值錢的是」「這正是重點」「值得注意的是」「又 X 又 Y」，以及句首的「其實／老實說／我記得／說真的」
+- **句首雜訊詞**：「其實／老實說／坦白說／我記得／說真的／說穿了／值得注意的是」等出現在句首時檢查；引述與程式碼內放行
 - **AI 工具殘留**：追蹤參數與內部 citation 殘碼；引用原話、inline code 與 code fence 內容放行
 
 **對外文字**：寫給一般讀者的內容加 `--public`，多擋低誤報的工程黑話，例如「機械可檢」、`false positive`、`verbatim`。具有普通用法的「固化」、成語和「X 感」留給 S2 按語境判斷，不做無條件黑名單。
@@ -102,7 +110,7 @@ exit 0 才算過（exit 0 是程式回報「全部通過」的慣例，非 0 代
 上游先用 JSON manifest 明列需要保護的 exact literal 和出現次數，然後執行：
 
 ```
-python scripts/protected-material-check.py <manifest.json> <before.md> <after.md>
+python -X utf8 scripts/protected-material-check.py <manifest.json> <before.md> <after.md>
 ```
 
 ```json
@@ -124,7 +132,8 @@ python scripts/protected-material-check.py <manifest.json> <before.md> <after.md
 ## 留證格式（宣告完成時貼這個）
 
 ```
-S0 輸入閘：scene=<scene>；真實素材=有／無（無 → 已 STOP 要素材，未產出）
+S0 輸入閘：scene=<scene>；edit_authority=<review-only|propose|apply>；surface_scope=<scope>；真實素材=有／無
+Authority 驗證：未超出 surface_scope；review-only 無寫入；人類保留最終決定
 S1 機械閘：taiwan-style-check exit 0 ✅（或列已修項）
 Perspective review：未觸發／已執行（列 findings 與處理）
 S2 判斷閘：
