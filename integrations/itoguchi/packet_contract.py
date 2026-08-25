@@ -1,6 +1,8 @@
 """Validate optional Itoguchi scene-evidence packets for Ravenquill."""
 
+import importlib.util
 from collections import Counter
+from pathlib import Path
 
 
 class PacketContractError(ValueError):
@@ -17,6 +19,16 @@ _TOP_LEVEL_KEYS = {
     "warnings",
 }
 _QUERY_KEYS = {"holder", "resolved_holder", "as_of", "about", "persona"}
+
+_checker_path = Path(__file__).resolve().parents[2] / "scripts" / "protected-material-check.py"
+_checker_spec = importlib.util.spec_from_file_location(
+    "ravenquill_protected_material_check", _checker_path
+)
+if _checker_spec is None or _checker_spec.loader is None:
+    raise ImportError(f"unable to load protected-material checker: {_checker_path}")
+_checker = importlib.util.module_from_spec(_checker_spec)
+_checker_spec.loader.exec_module(_checker)
+_count_value = _checker.count_value
 
 
 def _require(condition, message):
@@ -61,11 +73,13 @@ def _source(value, label):
         f"{label}.path must be a safe relative path",
     )
     pointer = value.get("pointer")
+    pointer_parts = pointer[1:].split("/") if isinstance(pointer, str) else []
     _require(
         isinstance(pointer, str)
         and pointer.startswith("/")
-        and all(part for part in pointer[1:].split("/")),
-        f"{label}.pointer must identify a packet source value",
+        and len(pointer_parts) >= 3
+        and all(part not in ("", ".", "..") for part in pointer_parts),
+        f"{label}.pointer must be a safe absolute v1 source pointer",
     )
 
 
@@ -155,6 +169,22 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
             _story_time(item["since"], f"{label}.since")
         if "until" in item:
             _story_time(item["until"], f"{label}.until", nullable=True)
+        _require(
+            item.get("persona", query["persona"]) == query["persona"],
+            f"{label}.persona is inactive for the packet query",
+        )
+        _require(
+            item.get("toward", query["about"]) == query["about"],
+            f"{label}.toward is inactive for the packet query",
+        )
+        _require(
+            item.get("since", 0) <= query["as_of"],
+            f"{label}.since is inactive for the packet query",
+        )
+        _require(
+            item.get("until") is None or query["as_of"] < item["until"],
+            f"{label}.until is inactive for the packet query",
+        )
         conflicts = item.get("conflicts_with", [])
         _require(isinstance(conflicts, list), f"{label}.conflicts_with must be a list")
         for target in conflicts:
@@ -172,6 +202,10 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
         )
     for index, warning in enumerate(warnings):
         _nonempty_string(warning, f"warnings[{index}]")
+    _require(
+        not (voices and "voice_constraints_missing" in warnings),
+        "voice_constraints_missing contradicts supplied voice constraints",
+    )
 
 
 def select_protected_items(packet: dict, before_text: str, item_ids: list[str]) -> list[dict]:
@@ -182,13 +216,15 @@ def select_protected_items(packet: dict, before_text: str, item_ids: list[str]) 
     authored = {item["id"]: item["value"] for item in packet["authored_evidence"]}
     authored.update({item["id"]: item["text"] for item in packet["voice_constraints"]})
     derived_ids = {item["id"] for item in packet["derived_context"]}
-    selected = []
+    selected_values = {}
     for item_id in item_ids:
         _require(item_id not in derived_ids, f"derived item cannot be protected: {item_id}")
         _require(item_id in authored, f"unknown authored item: {item_id}")
-        value = authored[item_id]
-        count = before_text.count(value)
-        _require(count > 0, f"authored literal is absent from before_text: {item_id}")
+        selected_values.setdefault(authored[item_id], None)
+    selected = []
+    for value in selected_values:
+        count = _count_value(before_text, value)
+        _require(count > 0, f"authored literal is absent from before_text: {value!r}")
         selected.append({"value": value, "count": count})
     return selected
 
@@ -207,6 +243,9 @@ def voice_status(packet: dict, *, writing_new_dialogue: bool) -> str:
     """Return the approved voice-fidelity status or block unsafe dialogue."""
     validate_packet(packet)
     _require(isinstance(writing_new_dialogue, bool), "writing_new_dialogue must be boolean")
+    if "scene_presence_unverified" in packet["warnings"]:
+        _require(not writing_new_dialogue, "new dialogue requires verified scene presence")
+        return "voice fidelity: unverified"
     if packet["voice_constraints"]:
         return "voice fidelity: verified against supplied constraints"
     _require(not writing_new_dialogue, "new dialogue requires an authored voice constraint")

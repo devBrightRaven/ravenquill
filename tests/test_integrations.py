@@ -21,6 +21,7 @@ HERMES_PLUGIN = INTEGRATIONS / "hermes" / "writing_harness_plugin.py"
 PY = sys.executable
 REWRITE_DIFF = ROOT / "scripts" / "rewrite-diff.py"
 PACKET_CONTRACT = INTEGRATIONS / "itoguchi" / "packet_contract.py"
+PROTECTED_CHECKER = ROOT / "scripts" / "protected-material-check.py"
 
 sys.path.insert(0, str(INTEGRATIONS))
 import harness_core as core  # noqa: E402
@@ -296,6 +297,14 @@ class ItoguchiPacketContract(unittest.TestCase):
                 with self.assertRaises(contract.PacketContractError):
                     contract.validate_packet(bad)
 
+    def test_packet_rejects_unsafe_or_underspecified_source_pointers(self):
+        for pointer in ("/../../etc/passwd", "/beliefs//content", "/beliefs/content"):
+            with self.subTest(pointer=pointer):
+                packet = itoguchi_packet()
+                packet["authored_evidence"][0]["source"]["pointer"] = pointer
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
+
     def test_expected_revision_must_match(self):
         with self.assertRaises(contract.PacketContractError):
             contract.validate_packet(
@@ -325,6 +334,64 @@ class ItoguchiPacketContract(unittest.TestCase):
             [{"value": text, "count": 1}],
         )
 
+    def test_protected_selection_matches_existing_checker_semantics(self):
+        packet = itoguchi_packet()
+        packet["authored_evidence"].extend(
+            [
+                {
+                    "id": "a3",
+                    "kind": "belief",
+                    "value": "開始懷疑我的人",
+                    "availability": "character",
+                    "source": {"path": "other.md", "pointer": "/beliefs/0/content"},
+                },
+                {
+                    "id": "a4",
+                    "kind": "fact",
+                    "value": "30",
+                    "availability": "character",
+                    "source": {"path": "facts.md", "pointer": "/facts/0/content"},
+                },
+                {
+                    "id": "a5",
+                    "kind": "fact",
+                    "value": "https://example.com/a",
+                    "availability": "character",
+                    "source": {"path": "facts.md", "pointer": "/facts/1/content"},
+                },
+            ]
+        )
+        cases = (
+            ("開始懷疑我的人。開始懷疑我的人。", ["a1"], [{"value": "開始懷疑我的人", "count": 2}]),
+            ("30 與 130", ["a4"], [{"value": "30", "count": 1}]),
+            (
+                "https://example.com/a2 https://example.com/a",
+                ["a5"],
+                [{"value": "https://example.com/a", "count": 1}],
+            ),
+            ("開始懷疑我的人", ["a1", "a3"], [{"value": "開始懷疑我的人", "count": 1}]),
+        )
+        for before_text, item_ids, expected in cases:
+            with self.subTest(item_ids=item_ids):
+                items = contract.select_protected_items(packet, before_text, item_ids)
+                self.assertEqual(items, expected)
+                with tempfile.TemporaryDirectory() as directory:
+                    directory = Path(directory)
+                    manifest = directory / "manifest.json"
+                    before = directory / "before.md"
+                    manifest.write_text(json.dumps({"items": items}), encoding="utf-8")
+                    before.write_text(before_text, encoding="utf-8")
+                    result = subprocess.run(
+                        [PY, str(PROTECTED_CHECKER), str(manifest), str(before), str(before)],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        with self.assertRaises(contract.PacketContractError):
+            contract.select_protected_items(packet, "130", ["a4"])
+
     def test_character_availability_rejects_writer_only_and_derived_ids(self):
         contract.require_character_available(itoguchi_packet(), ["a1"])
         for item_id in ("a2", "d1", "v1"):
@@ -350,6 +417,42 @@ class ItoguchiPacketContract(unittest.TestCase):
         packet["voice_constraints"][0]["conflicts_with"] = ["v2"]
         with self.assertRaises(contract.PacketContractError):
             contract.validate_packet(packet)
+
+    def test_voice_constraints_must_be_active_for_packet_query(self):
+        for field, value in (
+            ("persona", "警察"),
+            ("toward", "劉建明"),
+            ("since", 19),
+            ("until", 18),
+        ):
+            for writing_new_dialogue in (False, True):
+                with self.subTest(field=field, writing_new_dialogue=writing_new_dialogue):
+                    packet = itoguchi_packet()
+                    packet["voice_constraints"][0][field] = value
+                    with self.assertRaises(contract.PacketContractError):
+                        contract.voice_status(
+                            packet, writing_new_dialogue=writing_new_dialogue
+                        )
+
+    def test_voice_constraints_missing_warning_cannot_contradict_rules(self):
+        packet = itoguchi_packet()
+        packet["warnings"] = ["voice_constraints_missing"]
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+    def test_unverified_scene_presence_blocks_only_new_dialogue_certification(self):
+        packet = itoguchi_packet()
+        packet["warnings"] = ["scene_presence_unverified"]
+        self.assertEqual(
+            contract.select_protected_items(packet, "開始懷疑我的人", ["a1"]),
+            [{"value": "開始懷疑我的人", "count": 1}],
+        )
+        with self.assertRaises(contract.PacketContractError):
+            contract.voice_status(packet, writing_new_dialogue=True)
+        self.assertEqual(
+            contract.voice_status(packet, writing_new_dialogue=False),
+            "voice fidelity: unverified",
+        )
 
     def test_voice_status_requires_constraints_for_new_dialogue(self):
         self.assertEqual(
