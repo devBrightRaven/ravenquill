@@ -27,7 +27,7 @@
 
 `review-only` 禁止寫入；`propose` 只能提供候選修改；`apply` 只能在 `surface_scope` 內寫入。人類保留最終採用、拒絕與發布決定。
 
-若 `scene: fiction`，S0 確認 `source_evidence` 涵蓋本次故事證據；它界定 authored facts、角色知識與 canon，不要求 nonfiction 真實案例或可外部驗證的公開主張，packet-external 內容維持 unresolved。`new character dialogue` 必須有 supplied authored voice constraints，否則 `BLOCK`；既有對白可 review 或 edit，但缺少 constraints 時 S2 固定寫 `voice fidelity: unverified`。
+若 `scene: fiction`，S0 確認 `source_evidence` 涵蓋本次故事證據；它界定 authored facts、角色知識與 canon，不要求 nonfiction 真實案例或可外部驗證的公開主張，packet-external 內容維持 unresolved。`new character dialogue` for a named character 必須有 supplied authored voice constraints，否則 `BLOCK`；既有對白可 review 或 edit，但缺少 constraints 時 S2 固定寫 `voice fidelity: unverified`。
 
 對非 fiction 的 scene，接著問：這篇要不要**真實場景／案例／引述對白／數字**？
 
@@ -77,18 +77,20 @@ exit 0 才算過（exit 0 是程式回報「全部通過」的慣例，非 0 代
 
 腳本抓不到的問題（文章結構、作者聲音、敘事姿態、台灣語感、有沒有編造）只能靠人判斷。**逐項自答，並把結果貼進回覆**，才能宣告完成。把答案貼出來就是「留證」：留下一份事後能回頭檢查的證據，而不是一句「我檢查過了」就算數。
 
-若 `scene: fiction`，S2 報告 `knowledge fidelity`（知識↔`source_evidence`）、`canon fidelity`（人物、關係、事件↔authored evidence）與 `voice fidelity`（constraints 比對結果）。既有對白缺少 constraints 時固定為 `voice fidelity: unverified`；缺少 constraints 的新 `new character dialogue` 已在 S0 `BLOCK`。
+若 `scene: fiction`，S2 報告 `knowledge fidelity`（知識↔`source_evidence`）、`canon fidelity`（人物、關係、事件↔authored evidence）與 `voice fidelity`（constraints 比對結果）。既有對白缺少 constraints 時固定為 `voice fidelity: unverified`；缺少 constraints 的新 `new character dialogue` for a named character 已在 S0 `BLOCK`。
 
 > 這裡的「敘事姿態」指作者在文章裡站的位置：是把場景擺出來讓讀者自己下判斷，還是急著用形容詞替讀者定性。前者像人寫的，後者是 AI 的慣性。下面 2b 會展開怎麼自查。
 
-### 2a 結構／聲音 5 問
+### 2a 結構／聲音 5 問（非 fiction）
 1. 開場有具體場景／時間／人，還是全景泛論？
 2. 有一個「我自己的」、會被反駁的主張當主軸？
 3. 段落詳略刻意不平均（重點停留、其餘掃過），還是 N 段等長罐頭？
 4. 收尾是具體斷言，還是空心金句（刪掉看內容掉不掉血）？
 5. 全篇有至少一個只有當事人講得出的真實（可匿名）例子／數字？
 
-任一答不出 → 還是 AI 文，**重寫骨架不是潤稿**。
+非 fiction 任一答不出 → 還是 AI 文，**重寫骨架不是潤稿**。
+
+`fiction` 改查：場景與視角是否清楚、結構是否收束，以及內容是否符合 `source_evidence` 與 supplied voice constraints；不要求可反駁個人主張或真實例子／數字。
 
 ### 2b 敘事姿態
 - 評價詞前置自查：每個「很／最／真正／幾乎／太＋評價詞」「理由很 X」「問題出在 Y」，問「刪掉它，讀者靠前文推得出來嗎？」推得出 → 刪（讀者自己得出＝敘事成功）；推不出 → 補場景不是補形容詞。
@@ -100,6 +102,7 @@ exit 0 才算過（exit 0 是程式回報「全部通過」的慣例，非 0 代
 
 ### 2d 場景邊界
 
+- `fiction`：依 `source_evidence` 檢查場景、角色知識與 canon；fidelity 結果留在 2g，不套用非 fiction 的真實素材要求。
 - `social`：保留口頭禪、碎句與刻意斷行；輸出到純文字平台時清除 Markdown 標記。
 - `newsletter`：保留故事節奏、岔題與留白；不強迫補公式化結尾。
 - `sales`：去掉浮誇形容詞，但不得削弱 CTA、價格、期限、名額或退費承諾。
@@ -139,12 +142,12 @@ python -X utf8 scripts/protected-material-check.py <manifest.json> <before.md> <
 ## 留證格式（宣告完成時貼這個）
 
 ```
-S0 輸入閘：scene=<scene>；edit_authority=<review-only|propose|apply>；surface_scope=<scope>；真實素材=有／無
+S0 輸入閘：scene=<scene>；edit_authority=<review-only|propose|apply>；surface_scope=<scope>；source_evidence=<authored story evidence|none>；真實素材=有／無（非 fiction）
 Authority 驗證：未超出 surface_scope；review-only 無寫入；人類保留最終決定
 S1 機械閘：taiwan-style-check exit 0 ✅（或列已修項）
 Perspective review：未觸發／已執行（列 findings 與處理）
 S2 判斷閘：
-  2a 5 問：①… ②… ③… ④… ⑤…（逐題一句話佐證）
+  2a 非 fiction 5 問：①… ②… ③… ④… ⑤…；fiction 改報場景／視角／收束／evidence／voice 檢查結果
   2b 評價詞／雜訊詞：已掃，列刪改處或「無」
   2c 台灣語感：對白唸過／無對白
   2d 場景邊界：已依 <scene> 檢查
@@ -154,7 +157,7 @@ S2 判斷閘：
     artifacts=<實際 manifest/before/after 路徑|none>
     result=<實際 exit code|manual exact-literal comparison>
     unresolved URL decisions=<保持原樣、待人類決定的 variants|none>
-  2g fiction：knowledge fidelity=…；canon fidelity=…；voice fidelity=…
+  2g fiction：knowledge fidelity=…；canon fidelity=…；voice fidelity=…；既有對白缺 constraints 時逐字寫 `voice fidelity: unverified`
 ```
 
 Exit code 只能來自實際以這三份 artifacts 執行過的 command。純聊天或模擬改寫要寫 `checker=not executed`，改報 manual exact-literal comparison。三道核心關卡任一未過或留證缺項＝未完成。條件式 review 若觸發，其 findings 也必須處理。
