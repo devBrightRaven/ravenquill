@@ -365,6 +365,42 @@ class TaiwanStyleCheck(unittest.TestCase):
 
 
 class ProtectedMaterialCheck(unittest.TestCase):
+    def test_uri_literals_allow_ascii_sentence_punctuation_without_accepting_extensions(self):
+        unchanged = (
+            ("https://example.com/a", "See https://example.com/a."),
+            ("https://example.com/a", "See https://example.com/a, then continue."),
+            ("mailto:test@example.com", "Email mailto:test@example.com."),
+        )
+        for uri, text in unchanged:
+            with self.subTest(uri=uri, text=text):
+                document = write_tmp(text)
+                manifest = write_manifest([{"value": uri, "count": 1}])
+                try:
+                    self.assertEqual(run(PROTECTED, manifest, document, document).returncode, 0)
+                finally:
+                    manifest.unlink(missing_ok=True); document.unlink(missing_ok=True)
+
+        uri = "https://example.com/a"
+        before = write_tmp(f"See {uri}.")
+        manifest = write_manifest([{"value": uri, "count": 1}])
+        try:
+            for changed in (
+                f"See {uri}.extra",
+                f"See {uri},extra",
+                f"See {uri}?added=1",
+                f"See {uri}#part",
+                f"See {uri}/extra",
+                f"See {uri}suffix",
+            ):
+                with self.subTest(changed=changed):
+                    after = write_tmp(changed)
+                    try:
+                        self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+                    finally:
+                        after.unlink(missing_ok=True)
+        finally:
+            manifest.unlink(missing_ok=True); before.unlink(missing_ok=True)
+
     def test_rfc_scheme_uri_literals_reject_suffix_drift(self):
         for uri, changed in (
             ("mailto:test@example.com", "mailto:test@example.com?subject=hi"),

@@ -84,7 +84,12 @@ def count_url_literal(text, value):
             return count
         end = index + len(value)
         left_ok = index == 0 or text[index - 1] in URL_LEFT_BOUNDARY
-        right_ok = end == len(text) or text[end] in URL_BOUNDARY
+        sentence_boundary = (
+            end < len(text)
+            and text[end] in ".,"
+            and (end + 1 == len(text) or text[end + 1].isspace())
+        )
+        right_ok = end == len(text) or text[end] in URL_BOUNDARY or sentence_boundary
         paired_wrapper = any(
             text[max(0, index - len(left)):index] == left and text[end:end + len(right)] == right
             for left, right in (("(", ")"), ("（", "）"), ("**", "**"), ("__", "__"))
