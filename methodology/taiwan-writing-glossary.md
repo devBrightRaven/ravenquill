@@ -322,6 +322,6 @@ description: 跨寫作 skill 共用的台灣語境校正規範。手寫／harnes
 每個寫作 skill 的 SKILL.md 在開頭與 bans 區塊，加一行：
 
 ```markdown
-> 寫作前必讀：`~/.claude/skills/writing-harness/methodology/taiwan-writing-glossary.md`
+> 寫作前按需讀取：`methodology/taiwan-writing-glossary.md`
 > Harness 檢查腳本必須載入此檔的 §6 regex 表。
 ```

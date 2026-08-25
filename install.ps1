@@ -1,38 +1,25 @@
-# writing-harness installer (Windows / PowerShell)
-# Copies the harness into ~\.claude\skills\ so Claude Code (and the hooks) can find it.
-# It does NOT touch your settings.json — see hooks\settings.example.json to wire hooks yourself.
+param(
+    [string]$SkillRoot = (Join-Path $HOME ".agents\skills")
+)
+
 $ErrorActionPreference = "Stop"
+$RepoDir = $PSScriptRoot
+$Dest = Join-Path $SkillRoot "ravenquill"
 
-$RepoDir   = $PSScriptRoot
-$SkillsDir = if ($env:CLAUDE_SKILLS_DIR) { $env:CLAUDE_SKILLS_DIR } else { Join-Path $HOME ".claude\skills" }
-$Dest        = Join-Path $SkillsDir "writing-harness"
-$TightenDest = Join-Path $SkillsDir "tighten"
-
-Write-Host "==> Installing writing-harness into: $Dest"
-New-Item -ItemType Directory -Force -Path $Dest, $TightenDest | Out-Null
-
-foreach ($sub in @("methodology", "scripts", "hooks", "examples")) {
-    Copy-Item -Recurse -Force (Join-Path $RepoDir $sub) (Join-Path $Dest $sub)
-}
-Copy-Item -Force (Join-Path $RepoDir "skill\tighten\SKILL.md") (Join-Path $TightenDest "SKILL.md")
-
-$Py = (Get-Command python -ErrorAction SilentlyContinue)
-if ($Py) {
-    Write-Host "==> Running smoke tests"
-    & python (Join-Path $RepoDir "tests\test_harness.py")
-} else {
-    Write-Host "==> Python not found on PATH; skipping smoke tests."
+if (Test-Path -LiteralPath $Dest) {
+    Write-Error "Refusing to overwrite existing destination: $Dest"
 }
 
-Write-Host ""
-Write-Host "Installed." -ForegroundColor Green
-Write-Host "   methodology + scripts + hooks + examples -> $Dest"
-Write-Host "   tighten skill                            -> $TightenDest"
-Write-Host ""
-Write-Host "Next steps:"
-Write-Host "  1. Run the S1 checker on any Chinese .md:"
-Write-Host "       python $Dest\scripts\taiwan-style-check.py your-file.md"
-Write-Host "  2. (Optional) Wire the hooks into Claude Code: open hooks\settings.example.json"
-Write-Host "     and merge its 'hooks' block into ~\.claude\settings.json."
-Write-Host "     Then edit the CONFIG block at the top of each hook to point at YOUR content paths."
-Write-Host "  3. Read methodology\writing-harness.md — that's the 3-station method itself."
+New-Item -ItemType Directory -Path (
+    $Dest,
+    (Join-Path $Dest "methodology"),
+    (Join-Path $Dest "scripts")
+) | Out-Null
+
+Copy-Item -LiteralPath (Join-Path $RepoDir "SKILL.md") -Destination (Join-Path $Dest "SKILL.md")
+Get-ChildItem -LiteralPath (Join-Path $RepoDir "methodology") -File -Filter "*.md" |
+    Copy-Item -Destination (Join-Path $Dest "methodology")
+Get-ChildItem -LiteralPath (Join-Path $RepoDir "scripts") -File -Filter "*.py" |
+    Copy-Item -Destination (Join-Path $Dest "scripts")
+
+Write-Host "Installed Ravenquill: $Dest"

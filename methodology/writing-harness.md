@@ -22,6 +22,7 @@
 - `scene`：`social`／`newsletter`／`sales`／`customer-service`／`office-report`／`general`
 - `edit_authority`：`review-only`／`propose`／`apply`
 - `surface_scope`：本次允許檢視或修改的檔案、段落、欄位或輸出面
+- `protected_material`：`<manifest.json>`／`none`
 
 `review-only` 禁止寫入；`propose` 只能提供候選修改；`apply` 只能在 `surface_scope` 內寫入。人類保留最終採用、拒絕與發布決定。
 
@@ -106,7 +107,9 @@ exit 0 才算過（exit 0 是程式回報「全部通過」的慣例，非 0 代
 
 ### 2f 保護內容與作者聲音
 
-上游先用 JSON manifest 明列需要保護的 exact literal 和出現次數，然後執行：
+如果本次確實沒有需要逐字保護的內容，明記 `protected_material: none`，跳過 protected checker。不要為了跑流程虛構 literal，也不要建立空 manifest。
+
+若有需要保護的內容，修改前先保留原稿，並用非空 JSON manifest 明列 exact literal 和出現次數。只要原稿含 URL，且需求要求保留事實或來源素材，預設 protected literal 就是完整 supplied URL，不是拆開後挑其中幾個元件保留。然後執行：
 
 ```
 python -X utf8 scripts/protected-material-check.py <manifest.json> <before.md> <after.md>
@@ -117,12 +120,12 @@ python -X utf8 scripts/protected-material-check.py <manifest.json> <before.md> <
   "items": [
     {"value": "8/30", "count": 1},
     {"value": "「原話」", "count": 1},
-    {"value": "https://example.com/?utm_source=chatgpt.com", "count": 1, "allow_ai_tracking_cleanup": true}
+    {"value": "https://example.com/?x=1&utm_source=ChatGPT.com", "count": 1}
   ]
 }
 ```
 
-姓名、數字、日期、承諾條款、引用與 URL 都可以列入 manifest。唯一可明示放行的 normalization 是移除 `utm_source=chatgpt.com`、`utm_source=openai` 或 `referrer=grok.com`，其他差異都算 drift。未列入 manifest 的新增主張與 supplied voice constraints 仍需人工核對。
+完整 protected URL 的結果只能是三種之一：整條 URL 原樣保留；manifest 明示授權後，只移除 raw query 中完全相同的小寫 segment `utm_source=chatgpt.com`、`utm_source=openai` 或 `referrer=grok.com`；使用者明確授權更改或移除那一條完整 URL。一般性的「移除 AI 痕跡」不會自動選中後兩種結果。`utm_source=ChatGPT.com`、encoded variants 等未符合 exact lowercase cleanup 的項目保持原樣，並列為 unresolved URL decision 交人類決定。未列入 manifest 的新增主張、supplied voice constraints 與高誤報語意詞仍需人工依上下文核對。
 
 改完後對照你的**人味保護清單**過一遍：那是一份作者自建的清單，收錄自己行文的人味特徵（慣用口頭語、標誌性句式、特定領域的講法）。目的是確認去 AI 味的過程沒有把作者本人的味道一起誤刪——判準是聚集不是單點：一兩處被改掉無妨，同一類特徵被系統性抹平才算失真。
 
@@ -141,10 +144,14 @@ S2 判斷閘：
   2c 台灣語感：對白唸過／無對白
   2d 場景邊界：已依 <scene> 檢查
   2e 9 類語病：默讀過，列修處或「無」
-  2f 保護內容：protected-material-check exit 0；未列 manifest 項目已人工核對
+  2f 保護內容：protected_material=<manifest.json|none>
+    checker=<executed|not executed>
+    artifacts=<實際 manifest/before/after 路徑|none>
+    result=<實際 exit code|manual exact-literal comparison>
+    unresolved URL decisions=<保持原樣、待人類決定的 variants|none>
 ```
 
-三道核心關卡任一未過或留證缺項＝未完成。條件式 review 若觸發，其 findings 也必須處理。
+Exit code 只能來自實際以這三份 artifacts 執行過的 command。純聊天或模擬改寫要寫 `checker=not executed`，改報 manual exact-literal comparison。三道核心關卡任一未過或留證缺項＝未完成。條件式 review 若觸發，其 findings 也必須處理。
 
 ---
 

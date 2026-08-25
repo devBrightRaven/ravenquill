@@ -17,7 +17,8 @@ AI_TRACKING_SEGMENTS = {
 }
 URL_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
 URL_BOUNDARY = set(" \t\r\n<>\"'「」『』，。；：！？")
-URL_LEFT_BOUNDARY = URL_BOUNDARY | {"("}
+URL_LEFT_BOUNDARY = URL_BOUNDARY
+DIGIT_JOINERS = set(".,/:+-")
 
 
 def configure_output():
@@ -79,10 +80,15 @@ def count_url_literal(text, value):
             return count
         end = index + len(value)
         left_ok = index == 0 or text[index - 1] in URL_LEFT_BOUNDARY
-        if left_ok and (end == len(text) or text[end] in URL_BOUNDARY):
-            count += 1
-        elif left_ok and text[end] == ")" and index >= 2 and text[index - 2:index] == "](":
-            # The unmatched final ')' closes a Markdown link destination.
+        right_ok = end == len(text) or text[end] in URL_BOUNDARY
+        paired_wrapper = any(
+            text[max(0, index - len(left)):index] == left and text[end:end + len(right)] == right
+            for left, right in (("(", ")"), ("（", "）"), ("**", "**"), ("__", "__"))
+        )
+        left_ticks = len(text[:index]) - len(text[:index].rstrip("`"))
+        right_ticks = len(text[end:]) - len(text[end:].lstrip("`"))
+        paired_wrapper = paired_wrapper or (left_ticks > 0 and left_ticks == right_ticks)
+        if (left_ok and right_ok) or paired_wrapper:
             count += 1
         start = index + 1
 
@@ -91,7 +97,22 @@ def count_value(text, value):
     if URL_SCHEME_RE.match(value):
         return count_url_literal(text, value)
     if re.search(r"\d", value):
-        return len(re.findall(rf"(?<!\d){re.escape(value)}(?!\d)", text))
+        count = 0
+        start = 0
+        while True:
+            index = text.find(value, start)
+            if index < 0:
+                return count
+            end = index + len(value)
+            left = text[index - 1] if index else ""
+            right = text[end] if end < len(text) else ""
+            left_word = left.isascii() and (left.isalnum() or left == "_")
+            right_word = right.isascii() and (right.isalnum() or right == "_")
+            left_number = index >= 2 and left in DIGIT_JOINERS and text[index - 2].isdigit()
+            right_number = end + 1 < len(text) and right in DIGIT_JOINERS and text[end + 1].isdigit()
+            if not (left_word or right_word or left_number or right_number):
+                count += 1
+            start = index + 1
     return text.count(value)
 
 
@@ -106,7 +127,10 @@ def verify(items, before, after):
         after_value = strip_ai_tracking(value) if item.get("allow_ai_tracking_cleanup") else value
         if before_count != expected:
             failures.append((value, expected, before_count, after_value, count_value(after, after_value)))
-        after_expected[after_value] += expected
+        if after_value not in after_expected:
+            after_expected[after_value] = count_value(before, after_value)
+        if after_value != value:
+            after_expected[after_value] += expected
         source_for_after.setdefault(after_value, value)
     for after_value, expected in after_expected.items():
         after_count = count_value(after, after_value)

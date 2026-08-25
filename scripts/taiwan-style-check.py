@@ -77,7 +77,6 @@ MAINLAND_WORDS = [
     "硬盤",
     "硬件",
     "服務器",
-    "登錄",
     "操作系統",
     "數碼",
     "攝像頭",
@@ -111,8 +110,8 @@ PUBLIC_JARGON = [
 MESSAGE_SEMICOLON = "；"
 
 AI_TOOL_RESIDUE = [
-    r"[?&](?:utm_source=(?:chatgpt\.com|openai)|referrer=grok\.com)(?=&|#|\s|[，。；！？)]|$)",
-    r"(?<![A-Za-z0-9_])(?:turn\d+(?:search|news|fetch|view)\d+|cite(?:turn\d+\w*\d+))(?![A-Za-z0-9_])",
+    (r"[?&](?:utm_source=(?:chatgpt\.com|openai)|referrer=grok\.com)(?=&|#|\s|[，。；！？)>]|$)", 0),
+    (r"(?<![A-Za-z0-9_])(?:turn\d+(?:search|news|fetch|view)\d+|cite(?:turn\d+\w*\d+))(?![A-Za-z0-9_])", re.IGNORECASE),
 ]
 
 # 半形標點全形化檢查 — 中文上下文不可用半形 , : ? ( ) ; !
@@ -136,13 +135,66 @@ def configure_output():
             stream.reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
+def mask_chars(text):
+    return "".join(char if char in "\r\n" else " " for char in text)
+
+
+def mask_code_spans(text):
+    pattern = re.compile(
+        r"(?<!`)(`+)(?!`)(?:(?!\r?\n[ \t]*\r?\n).)*?(?<!`)\1(?!`)",
+        re.DOTALL,
+    )
+    return pattern.sub(lambda match: mask_chars(match.group(0)), text)
+
+
+def mask_quotes(line):
+    chars = list(line)
+    spans = []
+    pairs = {"「": "」", "『": "』", "“": "”"}
+    index = 0
+    while index < len(line):
+        if line[index] in pairs:
+            close = line.find(pairs[line[index]], index + 1)
+            if close >= 0:
+                spans.append((index, close + 1))
+                index = close + 1
+                continue
+        if line[index] == '"':
+            close = index + 1
+            while close < len(line):
+                if line[close] == '"':
+                    backslashes = 0
+                    before = close - 1
+                    while before >= 0 and line[before] == "\\":
+                        backslashes += 1
+                        before -= 1
+                    if backslashes % 2 == 0:
+                        spans.append((index, close + 1))
+                        index = close + 1
+                        break
+                close += 1
+            else:
+                index += 1
+            continue
+        index += 1
+    for start, end in spans:
+        chars[start:end] = " " * (end - start)
+    return "".join(chars)
+
+
 def mask_non_prose(body):
     """Mask Markdown/code/quoted material without changing line positions."""
     output = []
+    prose = []
+    block_starts = []
+    single_lines = []
     fence_char = None
     fence_length = 0
+    fence_prefix = 0
     indented_block = False
     previous_blank = True
+    previous_heading = False
+    list_indent = None
 
     for raw_line in body.splitlines(keepends=True):
         newline = "\n" if raw_line.endswith("\n") else ""
@@ -150,77 +202,93 @@ def mask_non_prose(body):
         if line.endswith("\r"):
             line, newline = line[:-1], "\r" + newline
 
-        fence = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        list_item = re.match(r"^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]+)", line)
+        if list_item:
+            list_indent = len(list_item.group(0))
+        leading = len(line) - len(line.lstrip(" "))
+        in_list = list_indent is not None and leading >= list_indent
+        relative = line[list_indent:] if in_list else line
+        prefix = list_indent if in_list else 0
+        fence = re.match(r"^ {0,3}(`{3,}|~{3,})", relative)
         if fence_char:
-            close = re.match(rf"^ {{0,3}}{re.escape(fence_char)}{{{fence_length},}}\s*$", line)
+            closing = line[fence_prefix:] if len(line) >= fence_prefix else line
+            close = re.match(rf"^ {{0,3}}{re.escape(fence_char)}{{{fence_length},}}\s*$", closing)
             output.append(" " * len(line) + newline)
+            prose.append(False)
+            block_starts.append(False)
+            single_lines.append(False)
             if close:
                 fence_char = None
             previous_blank = not line.strip()
+            previous_heading = False
             continue
         if fence:
             run = fence.group(1)
             fence_char, fence_length = run[0], len(run)
+            fence_prefix = prefix
             output.append(" " * len(line) + newline)
+            prose.append(False)
+            block_starts.append(False)
+            single_lines.append(False)
             previous_blank = False
+            previous_heading = False
             continue
 
         is_indented = line.startswith("    ") or line.startswith("\t")
-        if is_indented and (indented_block or previous_blank):
+        relative_indent = leading - list_indent if in_list else leading
+        is_indented_code = (
+            in_list and relative_indent >= 4 and (indented_block or previous_blank)
+        ) or (
+            not in_list and is_indented and (indented_block or previous_blank or previous_heading)
+        )
+        if is_indented_code:
             indented_block = True
             output.append(" " * len(line) + newline)
+            prose.append(False)
+            block_starts.append(False)
+            single_lines.append(False)
             previous_blank = False
+            previous_heading = False
             continue
         if not is_indented:
             indented_block = False
         if re.match(r"^ {0,3}>", line):
             output.append(" " * len(line) + newline)
+            prose.append(False)
+            block_starts.append(False)
+            single_lines.append(False)
             previous_blank = False
+            previous_heading = False
             continue
-
-        chars = list(line)
-        spans = []
-        index = 0
-        while index < len(line):
-            if line[index] == "`":
-                run = len(line[index:]) - len(line[index:].lstrip("`"))
-                close = index + run
-                while close < len(line):
-                    if line[close] != "`":
-                        close += 1
-                        continue
-                    close_run = len(line[close:]) - len(line[close:].lstrip("`"))
-                    if close_run == run:
-                        spans.append((index, close + run))
-                        index = close + run
-                        break
-                    close += close_run
-                else:
-                    index += run
-                continue
-            pairs = {"「": "」", "『": "』", "“": "”"}
-            if line[index] in pairs:
-                close = line.find(pairs[line[index]], index + 1)
-                if close >= 0:
-                    spans.append((index, close + 1))
-                    index = close + 1
-                    continue
-            if line[index] == '"':
-                close = index + 1
-                while close < len(line):
-                    if line[close] == '"' and (close == 0 or line[close - 1] != "\\"):
-                        spans.append((index, close + 1))
-                        index = close + 1
-                        break
-                    close += 1
-                else:
-                    index += 1
-                continue
-            index += 1
-        for start, end in spans:
-            chars[start:end] = " " * (end - start)
-        output.append("".join(chars) + newline)
+        output.append(line + newline)
+        prose.append(True)
+        is_heading = bool(re.match(r"^ {0,3}#{1,6}(?:\s|$)", line))
+        block_starts.append(bool(list_item) or is_heading)
+        single_lines.append(is_heading)
         previous_blank = not line.strip()
+        previous_heading = is_heading
+        if line.strip() and leading < (list_indent or 0) and not list_item:
+            list_indent = None
+
+    index = 0
+    while index < len(output):
+        if not prose[index]:
+            index += 1
+            continue
+        end = index + 1
+        while (
+            end < len(output)
+            and prose[end]
+            and not single_lines[index]
+            and not block_starts[end]
+        ):
+            end += 1
+        masked = mask_code_spans("".join(output[index:end])).splitlines(keepends=True)
+        output[index:end] = [
+            mask_quotes(part[:-1]) + part[-1] if part.endswith(("\n", "\r")) else mask_quotes(part)
+            for part in masked
+        ]
+        index = end
     return "".join(output)
 
 
@@ -290,6 +358,10 @@ def check_mainland_words(body):
     hits = []
     for word in MAINLAND_WORDS:
         hits.extend(find_all_with_line(body, re.escape(word)))
+    hits.extend(find_all_with_line(
+        body,
+        r"(?:登錄.{0,4}(?:帳號|使用者|用戶|密碼)|(?:帳號|使用者|用戶|密碼).{0,4}登錄)",
+    ))
     return hits
 
 
@@ -321,8 +393,8 @@ def check_message_semicolon(body):
 
 def check_ai_tool_residue(body):
     hits = []
-    for pattern in AI_TOOL_RESIDUE:
-        hits.extend(find_all_with_line(body, pattern, re.IGNORECASE))
+    for pattern, flags in AI_TOOL_RESIDUE:
+        hits.extend(find_all_with_line(body, pattern, flags))
     return hits
 
 
@@ -394,10 +466,10 @@ def main():
         "開場推銷詞": check_urgency(scan_body),
         "半形標點漏網（中文上下文）": check_halfwidth_punct(body),
         "大陸用語（glossary §2.1）": check_mainland_words(scan_body),
-        "API 術語（glossary §3.1）": check_api_terms(scan_body),
         "AI 工具殘留": check_ai_tool_residue(scan_body),
     }
     if public:
+        results["API 術語（--public，glossary §3.1）"] = check_api_terms(scan_body)
         results["對外工程黑話（--public，glossary §3.3）"] = check_public_jargon(scan_body)
     if is_client_msg:
         results["對外短訊分號（；，client-message）"] = check_message_semicolon(body)

@@ -1,57 +1,52 @@
-# Integrations — 接到不同的 agent
+# Optional host adapters
 
-> One harness, many agents. The methodology and scripts are agent-agnostic; only
-> the auto-reminder wiring and the skill packaging differ per host.
+Ravenquill core 是 repository 根目錄的 `SKILL.md`、`methodology/` 與 `scripts/`。先依根目錄 [README](../README.md) 安裝 core；支援 Agent Skills `SKILL.md` 慣例的 runtime 可直接探索，其他環境也能讀 Markdown 並執行 Python stdlib scripts。
 
-這套 harness 大部分本來就跟 agent 無關。真正綁定某個 agent 的只有兩件事：**自動提醒的接線方式**，和 **tighten 怎麼被叫起來**。其餘——三站方法論（markdown）和檢查腳本（純 stdlib Python）——任何 agent、任何編輯器、任何 CI 都能直接用。
+本目錄只放選用的 host adapters。它們提供自動提醒或 host-native command，不能定義 core behavior，也不能擴張 `edit_authority`、`surface_scope` 或人類的最終決定權。Core installer 不會安裝這些檔案，也不會修改 host config。
 
-## 哪些東西本來就到處能用（不必接）
+## 共用 core，不接 adapter 也能用
 
-| 元件 | 怎麼用 |
+| 元件 | 用法 |
 |---|---|
-| `methodology/writing-harness.md`、`taiwan-writing-glossary.md` | 任何 agent 讀得懂的 markdown。放進該 agent 的「自訂指令」即可（見下表）。 |
-| `scripts/taiwan-style-check.py`、`verbosity-check.py` | 純 stdlib，`python <script> file.md`。任何環境跑得動，零依賴。 |
+| `../SKILL.md` | 寫作、審查或改稿時先讀取並記錄授權契約 |
+| `../methodology/writing-harness.md` | 執行 S0/S1/S2 三道關卡 |
+| `../methodology/taiwan-writing-glossary.md` | 處理台灣繁中時按需讀取 |
+| `../scripts/taiwan-style-check.py` | `python -X utf8 <script> file.md` |
+| `../scripts/protected-material-check.py` | 核對明列的 exact literal/count；`protected_material: none` 時跳過 |
 
-換句話說：要讓任何 agent「會跑 S1 機械閘」，根本不必接線——叫它跑那支腳本就好。下面要接的，是讓 agent **自動**在你寫長文時提醒你（不必每次手動），以及把 tighten 變成原生指令。
+## Adapter 對照
 
-## 三個 agent 的接線對照
-
-| 能力 | Claude Code | OpenAI Codex CLI | NousResearch Hermes |
+| 能力 | `Claude Code` | `OpenAI Codex CLI` | `NousResearch Hermes` |
 |---|---|---|---|
-| 寫完自動提醒三站 | `hooks/` PostToolUse hook（`Edit\|Write`） | `integrations/codex/` 的 hook（`apply_patch`） | `integrations/hermes/` plugin（`post_tool_call`＋`pre_llm_call`） |
-| 對外產出 evidence 提醒 | `hooks/output-tier-gate.py` | `integrations/codex/output-tier-gate.py` | 同上 plugin 一併處理 |
-| 方法論餵給 agent | skill 載入 + CLAUDE.md | `AGENTS.md`（`~/.codex/AGENTS.md` 或專案根） | `AGENTS.md` / `CLAUDE.md` / `SOUL.md` |
-| tighten 叫法 | `skill/tighten/SKILL.md`（skill） | `~/.codex/prompts/tighten.md`（custom prompt，本目錄附） | `~/.hermes/skills/tighten/SKILL.md`（同 SKILL.md 標準） |
+| 寫完提醒三道關卡 | `../hooks/` PostToolUse hook | `codex/` PostToolUse hook | `hermes/` plugin |
+| 對外 evidence 提醒 | `../hooks/output-tier-gate.py` | `codex/output-tier-gate.py` | 同一 Hermes plugin |
+| legacy tighten | `../skill/tighten/SKILL.md` | `codex/prompts/tighten.md` | 可自行移植 legacy skill |
 
-提醒類 hook 一律 **warn-only**：只提醒不擋。觀察一陣子誤報乾淨後，再自行升級成硬擋。
+提醒型 adapter 都是 warn-only。提醒不代表通過檢查，也不授權 adapter 修改內容。
 
----
+## `OpenAI Codex CLI`（選用）
 
-## Codex CLI
+1. Clone repository，先安裝或直接使用 agent-agnostic core。
+2. 檢查 `codex/config.example.toml`，再把需要的 hook 設定手動合併到自己的 config。
+3. 把範例裡的 repository path 換成實際 clone path。
+4. 如需舊版 `/tighten` 體驗，再自行安裝 `codex/prompts/tighten.md`。
 
-1. Clone 這個 repo 到任意位置，記下絕對路徑。
-2. 把 `integrations/codex/config.example.toml` 的 `hooks` 區塊併進 `~/.codex/config.toml`（或專案的 `.codex/config.toml`），把 `/ABS/PATH/TO/writing-harness` 換成你的 clone 路徑。
-3. （可選）把 `integrations/codex/prompts/tighten.md` 複製到 `~/.codex/prompts/tighten.md`，之後 `/tighten` 就能用。
-4. （可選）把 `methodology/writing-harness.md` 的精華貼進 `~/.codex/AGENTS.md`，讓 Codex 預設就知道三站規則。
+Codex adapter 觀察 `apply_patch` 的 tool input，從 patch header 取得候選路徑，並以非阻擋訊息提醒。它不取代 root `SKILL.md`，也不自動套用 findings。
 
-**為什麼 matcher 是 `apply_patch`**：Codex 改檔走 `apply_patch` 工具，不是 `Edit`/`Write`，檔名藏在 patch 內文（`*** Update File: ...`）。adapter 會自動從 patch 裡撈路徑，所以你不必改 matcher。輸出走 Codex 的 `systemMessage` 欄位（非阻擋）。
+## NousResearch Hermes（選用）
 
-## Hermes Agent
+1. Clone repository，先安裝或直接使用 agent-agnostic core。
+2. 依 Hermes plugin 目錄慣例，將 `hermes/writing_harness_plugin.py` 與 `harness_core.py` 放在可互相 import 的位置。
+3. 如需 legacy `tighten`，另行移植並自行處理該 subskill 的 host-specific 指令；不要把它當成 core requirement。
 
-1. 把 `integrations/hermes/writing_harness_plugin.py` 和 `integrations/harness_core.py` 一起放進 `~/.hermes/plugins/`（plugin 會 import 同層的 core，所以兩個要在一起，或自行調整 import 路徑）。
-2. tighten：把 `skill/tighten/SKILL.md` 複製到 `~/.hermes/skills/tighten/SKILL.md`。frontmatter（`name`／`description`）就是 agentskills.io 標準，Hermes 直接吃；只要把內文寫死的 `~/.claude/...` 路徑改成你的 clone 路徑、把「spawn general-purpose agent」換成 Hermes 的 subagent 叫法即可。
-3. （可選）把方法論精華放進 `~/.hermes/`（或專案）的 `AGENTS.md` / `CLAUDE.md`。
+Hermes 的 `post_tool_call` 只觀察並暫存提醒；`pre_llm_call` 才把提醒注入下一輪 context。這是 adapter lifecycle，不能改寫 Ravenquill 的授權契約。
 
-**為什麼是兩個 hook**：Hermes 的 `post_tool_call` 是 fire-and-forget——return 值被忽略、不能回注 context。所以 plugin 在 `post_tool_call` 只負責「觀察 + 暫存提醒」，真正把提醒注入下一輪對話的是 `pre_llm_call`（它的 return 值可注入 context）。這是 Hermes 慣用法，細節見 plugin 檔頂註解。
+## `Claude Code`（選用）
 
-## Claude Code
+`Claude Code` adapter 位於 repository 根的 `hooks/`。先檢查 `hooks/settings.example.json` 與每支 hook 的 CONFIG，再手動合併需要的設定。Core installer 不會執行這一步。
 
-不在這個目錄——它用的是 repo 根的 `hooks/`，接法見最上層 `README.md` 的「接進 Claude Code」。
+## 共用 adapter logic
 
----
+`harness_core.py` 是 Codex 與 Hermes adapter 的 stdlib 決策核心。若要調整偵測路徑，修改其中的 `INCLUDES`、`EXCLUDES` 與 `L3_*` 設定。`Claude Code` 的既有 hooks 保持獨立，避免 adapter 升級改動現有安裝。
 
-## 共用核心與設定家
-
-`harness_core.py` 是 Codex / Hermes 兩邊 adapter 共用的決策核心（純 stdlib）：要不要提醒、提醒什麼，都集中在這裡，改規則只改一處。Codex／Hermes 使用者要調整偵測路徑（`INCLUDES` / `EXCLUDES` / `L3_*`）就改 `harness_core.py` 頂部的 CONFIG。
-
-Claude Code 的 `hooks/` 刻意保留各自獨立的同款 CONFIG，**不動它**是為了讓既有安裝零風險。如果你想讓三個 agent 共用同一份設定，把 `hooks/` 那兩支也指到 `harness_core.py` 即可（regex 與訊息完全一致）。
+這些 adapter 只驗證 repository 內附的具體接線；未列出的 runtime 仍可使用 core `SKILL.md` 與 scripts，但不宣稱已有原生 hook integration。

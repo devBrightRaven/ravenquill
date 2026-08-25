@@ -93,7 +93,7 @@ class TaiwanStyleCheck(unittest.TestCase):
         terms = (
             "視頻", "視頻號", "公眾號", "在線", "網絡", "互聯網", "批量", "軟件",
             "信息", "默認", "鏈接", "範式轉換", "屏幕", "硬盤", "硬件", "服務器",
-            "登錄", "操作系統", "數碼", "攝像頭", "賦能", "復盤", "對標", "抓手",
+            "操作系統", "數碼", "攝像頭", "賦能", "復盤", "對標", "抓手",
         )
         for blocked in terms:
             with self.subTest(term=blocked, direction="flag"):
@@ -240,6 +240,95 @@ class TaiwanStyleCheck(unittest.TestCase):
             list_continuation.unlink(missing_ok=True)
             numbered_line.unlink(missing_ok=True)
 
+    def test_commonmark_multiline_code_spans_stop_at_block_boundaries(self):
+        multiline = write_tmp("前文 `跨行\nturn0search0` 結束。\n乾淨。\nturn9search8\n")
+        blank_break = write_tmp("前文 `未關閉\n\nturn0search0` 仍是正文。\n")
+        heading_break = write_tmp("# 標題 `未關閉\nturn0search0` 仍是正文。\n")
+        try:
+            result = run(STYLE, multiline)
+            self.assertEqual(result.returncode, 10, result.stdout)
+            self.assertIn("L4", result.stdout)
+            self.assertNotIn("L2", result.stdout)
+            self.assertEqual(run(STYLE, blank_break).returncode, 10)
+            self.assertEqual(run(STYLE, heading_break).returncode, 10)
+        finally:
+            multiline.unlink(missing_ok=True)
+            blank_break.unlink(missing_ok=True)
+            heading_break.unlink(missing_ok=True)
+
+    def test_list_fences_and_heading_indented_code_follow_commonmark_blocks(self):
+        allowed = (
+            "1. 範例\n    ```text\n    turn0search0\n    ```\n",
+            "# 範例\n    turn0search0\n",
+        )
+        for text in allowed:
+            with self.subTest(text=text):
+                p = write_tmp(text)
+                try:
+                    self.assertEqual(run(STYLE, p).returncode, 0)
+                finally:
+                    p.unlink(missing_ok=True)
+
+        continuation = write_tmp("1. 說明\n    turn0search0\n")
+        continuation_after_blank = write_tmp("1. 說明\n\n    turn0search0\n")
+        multiline_list_span = write_tmp("1. 前文 `跨行\n    turn0search0` 結束。\n")
+        try:
+            self.assertEqual(run(STYLE, continuation).returncode, 10)
+            self.assertEqual(run(STYLE, continuation_after_blank).returncode, 10)
+            self.assertEqual(run(STYLE, multiline_list_span).returncode, 0)
+        finally:
+            continuation.unlink(missing_ok=True)
+            continuation_after_blank.unlink(missing_ok=True)
+            multiline_list_span.unlink(missing_ok=True)
+
+    def test_ascii_quote_closes_after_an_even_backslash_run(self):
+        even = write_tmp('受訪者說 "引文 ' + "\\\\" + '" turn0search0 "尾端。\n')
+        odd = write_tmp('受訪者說 "引文 ' + "\\" + '" turn0search0 "尾端。\n')
+        try:
+            self.assertEqual(run(STYLE, even).returncode, 10)
+            self.assertEqual(run(STYLE, odd).returncode, 0)
+        finally:
+            even.unlink(missing_ok=True)
+            odd.unlink(missing_ok=True)
+
+    def test_tracking_residue_matches_only_approved_raw_segments(self):
+        exact_autolink = write_tmp("來源：<https://example.com/?utm_source=chatgpt.com>\n")
+        variants = (
+            "來源：https://example.com/?utm_source=ChatGPT.com。\n",
+            "來源：https://example.com/?utm_source=chatgpt%2Ecom。\n",
+        )
+        try:
+            self.assertEqual(run(STYLE, exact_autolink).returncode, 10)
+            for text in variants:
+                with self.subTest(text=text):
+                    p = write_tmp(text)
+                    try:
+                        self.assertEqual(run(STYLE, p).returncode, 0)
+                    finally:
+                        p.unlink(missing_ok=True)
+        finally:
+            exact_autolink.unlink(missing_ok=True)
+
+    def test_denglu_is_blocked_only_in_login_context(self):
+        semantic = write_tmp("地政機關保存土地登錄簿，研究團隊另有資料登錄系統。\n")
+        login = write_tmp("請先登錄帳號再繼續。\n")
+        try:
+            self.assertEqual(run(STYLE, semantic).returncode, 0)
+            self.assertEqual(run(STYLE, login).returncode, 10)
+        finally:
+            semantic.unlink(missing_ok=True)
+            login.unlink(missing_ok=True)
+
+    def test_api_call_is_a_public_prose_rule(self):
+        internal = write_tmp("內部技術文件會記錄每次 API call。\n")
+        public = write_tmp("我們會替你做 API call。\n")
+        try:
+            self.assertEqual(run(STYLE, internal).returncode, 0)
+            self.assertEqual(run(STYLE, public, "--public").returncode, 10)
+        finally:
+            internal.unlink(missing_ok=True)
+            public.unlink(missing_ok=True)
+
     def test_touched_style_families_have_close_boundaries(self):
         cases = (
             ("ticket", "請處理 ticket。\n", "欄位是 `ticket`。\n", ()),
@@ -248,7 +337,7 @@ class TaiwanStyleCheck(unittest.TestCase):
             ("negation", "## 這不是終點\n", "這不是終點。\n", ()),
             ("dash", "甲——乙。\n", "甲—乙，或輸入 --help；欄位是 `甲——乙`。\n", ()),
             ("urgency", "你必須現在處理。\n", "原話是「你必須現在處理」。\n", ()),
-            ("api", "我們要做 API call。\n", "欄位是 `API call`。\n", ()),
+            ("api", "我們要做 API call。\n", "欄位是 `API call`。\n", ("--public",)),
             ("half punctuation", "中文,中文。\n", "版本 1,000，句尾可用英文句點.\n", ()),
         )
         for name, bad, good, flags in cases:
@@ -276,6 +365,17 @@ class TaiwanStyleCheck(unittest.TestCase):
 
 
 class ProtectedMaterialCheck(unittest.TestCase):
+    def test_digit_bearing_literals_reject_numeric_token_extensions(self):
+        for value, changed in (("500", "500.00"), ("8/30", "8/30/2026")):
+            with self.subTest(value=value):
+                before = write_tmp(f"原值 {value}。\n")
+                after = write_tmp(f"新值 {changed}。\n")
+                manifest = write_manifest([{"value": value, "count": 1}])
+                try:
+                    self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+                finally:
+                    manifest.unlink(missing_ok=True); before.unlink(missing_ok=True); after.unlink(missing_ok=True)
+
     def test_any_digit_bearing_value_uses_digit_boundaries(self):
         cases = (("8/30", "18/300"), ("500.00", "1500.00"), ("ID500A", "ID1500A"))
         for value, changed in cases:
@@ -338,6 +438,44 @@ class ProtectedMaterialCheck(unittest.TestCase):
         finally:
             manifest.unlink(missing_ok=True); before.unlink(missing_ok=True); after.unlink(missing_ok=True)
 
+    def test_cleanup_preserves_preexisting_normalized_target_occurrences(self):
+        dirty = "https://example.com/a?utm_source=chatgpt.com"
+        clean = "https://example.com/a"
+        manifest = write_manifest([
+            {"value": dirty, "count": 1, "allow_ai_tracking_cleanup": True},
+        ])
+        before = write_tmp(f"{dirty}\n{clean}\n")
+        missing = write_tmp(f"{clean}\n")
+        preserved = write_tmp(f"{clean}\n{clean}\n")
+        try:
+            self.assertEqual(run(PROTECTED, manifest, before, missing).returncode, 10)
+            self.assertEqual(run(PROTECTED, manifest, before, preserved).returncode, 0)
+        finally:
+            manifest.unlink(missing_ok=True); before.unlink(missing_ok=True)
+            missing.unlink(missing_ok=True); preserved.unlink(missing_ok=True)
+
+    def test_url_literals_allow_prose_and_markdown_wrappers(self):
+        url = "https://example.com/a"
+        wrappers = ("（{}）", "({})", "**{}**", "__{}__", "`{}`")
+        manifest = write_manifest([{"value": url, "count": 1}])
+        try:
+            for wrapper in wrappers:
+                with self.subTest(wrapper=wrapper):
+                    text = write_tmp(wrapper.format(url))
+                    try:
+                        self.assertEqual(run(PROTECTED, manifest, text, text).returncode, 0)
+                    finally:
+                        text.unlink(missing_ok=True)
+
+            before = write_tmp(f"**{url}**")
+            after = write_tmp(f"**{url}?added=1**")
+            try:
+                self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+            finally:
+                before.unlink(missing_ok=True); after.unlink(missing_ok=True)
+        finally:
+            manifest.unlink(missing_ok=True)
+
     def test_cleanup_only_accepts_exact_raw_tracking_segments(self):
         for segment in ("utm_source=ChatGPT.com", "utm_source=chatgpt%2Ecom"):
             url = f"https://example.com/a?x=1&{segment}"
@@ -363,7 +501,10 @@ class ProtectedMaterialCheck(unittest.TestCase):
         manifest = write_manifest([{"value": url, "count": 1}])
         before = write_tmp(f"來源：{url}\n")
         try:
-            for changed in (f"{url}/extra", f"{url}?added=1", f"x{url}"):
+            for changed in (
+                f"{url}/extra", f"{url}?added=1", f"x{url}",
+                f"{url}*extra", f"{url}`extra", f"{url})extra",
+            ):
                 with self.subTest(changed=changed):
                     after = write_tmp(f"來源：{changed}\n")
                     try:

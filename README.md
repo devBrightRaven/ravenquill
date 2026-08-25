@@ -1,129 +1,129 @@
 # Ravenquill
 
-> Authorship-preserving writing validation for AI agents.
+> 保留作者決定權與原始素材的寫作品質閘。
 
-Ravenquill is a fork of [scandnavik/writing-harness](https://github.com/scandnavik/writing-harness). It preserves the upstream MIT license and commit history while adding explicit source-material protection and evidence-backed rule governance.
+Ravenquill 是一個 agent-agnostic Agent Skill。Repository 根目錄就是可探索的 skill folder：`SKILL.md` 定義寫作契約，`methodology/` 放人工判斷方法，`scripts/` 提供 Python stdlib 機械檢查。支援 `SKILL.md` 慣例的 agent 可以直接載入；其他環境也能讀 Markdown 並自行執行腳本。
 
-防 AI Slop 的一套寫作品質閘（AI Slop 指 AI 寫出來那種空泛、堆砌、一看就知道不是人寫的味道）。它把「會不會寫成 AI 腔」這件事，從事後憑感覺修，前移成動筆前、草稿後兩個固定檢查點。方法論、腳本、agent hook 三件一起給，別人 clone 下來就能套用。方法論與腳本跟 agent 無關（任何 agent / 編輯器 / CI 都能跑）；自動提醒的接線 Claude Code、OpenAI Codex CLI、NousResearch Hermes 都有現成版本，見 [`integrations/`](integrations/)。
+這個 core 不依賴特定模型、subagent 或 council，也不會修改任何 agent 設定。`Claude Code`、`OpenAI Codex CLI` 與 `NousResearch Hermes` 的 hook／command 接線只是選用 adapter，放在 `hooks/` 與 `integrations/`。
 
-針對**台灣繁體中文**語境調校，但方法論本身與語言無關，換個 glossary 就能搬到別的語境。
+Ravenquill fork 自 [scandnavik/writing-harness](https://github.com/scandnavik/writing-harness)，保留上游 MIT 授權與 commit history，並加入明確的素材保護與規則證據治理。
 
----
-
-## 這套系統在解決什麼
-
-LLM 寫中文長文常出現半形標點夾在中文裡、破折號氾濫、大陸用語、「不是 X，是 Y」的二元對比模板，以及煞有介事編一個假例子。部分現象可機械檢查；句首語氣詞則保留給人工依語境判斷。
-
-靠 prompt 寫幾條規則擋不住，因為模型會選擇性遵守，而且事後沒有證據能證明它真的做了。這套系統改用「閘」的設計：機械的部分交給程式（exit code 不會說謊），判斷的部分強制留證，新 regex 則要有配對的正反例測試。
-
-## 系統三層
-
-| 層 | 檔案 | 角色 |
-|---|---|---|
-| **方法論** | `methodology/writing-harness.md` | S0 輸入閘 / S1 機械閘 / S2 判斷閘，三站本體 |
-| | `methodology/taiwan-writing-glossary.md` | 規則手冊：標點、大陸→台灣用字、句型、術語白話化 |
-| **機械閘腳本** | `scripts/taiwan-style-check.py` | S1 主閘，掃描台灣用字、標點、句型與 AI 殘留（exit 0／10） |
-| | `scripts/verbosity-check.py` | 掃 10 條 bloat／冗贅 pattern |
-| | `scripts/rewrite-diff.py` | 比對草稿與真人改稿，找出該寫進 glossary 的規則 |
-| | `scripts/protected-material-check.py` | 核對改寫前後的明列原話、數字、日期與 URL |
-| **自動執行 Hook** | `hooks/writing-harness-gate.py` | PostToolUse 自動提醒「這篇還沒過三站」 |
-| | `hooks/output-tier-gate.py` | 對外產出自動提醒附佐證包：來源、抽查、人工複核 |
-| **Skill** | `skill/tighten/SKILL.md` | bloat 偵測加 LLM 重寫管線 |
-| **範本** | `examples/content-voice-prompt.template.md` | 填空式的「你自己的口吻」規格 |
-
-## 快速安裝
+## 安裝 agent-agnostic core
 
 ```bash
 git clone https://github.com/devBrightRaven/ravenquill.git
 cd ravenquill
 
-# macOS / Linux
-./install.sh
+# macOS / Linux；預設安裝到 ~/.agents/skills/ravenquill
+bash ./install.sh
 
-# Windows (PowerShell)
+# 自訂 skill root
+bash ./install.sh /path/to/skills
+```
+
+```powershell
+# Windows PowerShell；預設安裝到 ~/.agents/skills/ravenquill
 .\install.ps1
+
+# 自訂 skill root
+.\install.ps1 -SkillRoot C:\path\to\skills
 ```
 
-安裝腳本會把方法論、腳本、hook、範本複製到 `~/.claude/skills/writing-harness/`，把 tighten skill 複製到 `~/.claude/skills/tighten/`，並跑一次煙霧測試（最基本的「裝完到底能不能動」檢查）。它**不會動你的 settings.json**，hook 接線要你自己來（見下）。
+Installer 只複製 root `SKILL.md`、`methodology/*.md` 與 `scripts/*.py`。它不安裝 hooks、integrations、examples 或 legacy `tighten`，也不改任何 host config。若目的地已存在，installer 會拒絕覆寫；要更新時，請先自行檢查、移走舊目錄，或改用另一個 skill root。
 
-## 三分鐘上手
+## 使用方式
 
-### 1. 跑機械閘（不裝任何東西就能用）
+請 agent 讀取安裝後的 `ravenquill/SKILL.md`，並依文件先記錄：
+
+```text
+scene: <scene>
+edit_authority: review-only | propose | apply
+surface_scope: <本次範圍>
+protected_material: <manifest.json | none>
+```
+
+人類保留採用、儲存與發布的最終決定。Adapter 只能提醒或回報，不能擴張 `edit_authority` 或 `surface_scope`。
+
+如果本次確實沒有 protected material，明記 `protected_material: none`，不要虛構一個 literal，也不要建立空 manifest。若有姓名、數字、日期、承諾、引述或 URL 需要逐字保留，先建立含 exact literal 與 count 的 manifest，再於修改後執行：
 
 ```bash
-python -X utf8 scripts/taiwan-style-check.py 你的文章.md
+python -X utf8 scripts/protected-material-check.py manifest.json before.md after.md
 ```
 
-exit 0 代表過；exit 10 會列出每一條命中與行號。這支腳本零依賴、純 stdlib，任何編輯器、任何 agent、CI 都能接。
+自動 tracking cleanup 只接受 manifest 明示放行的三個小寫 raw segment：`utm_source=chatgpt.com`、`utm_source=openai`、`referrer=grok.com`。大小寫變體、encoding、參數順序與其他 URL 差異都不自動正規化。
 
-### 2. 跑完整三站
+## 三道核心關卡
 
-打開 `methodology/writing-harness.md`，照 S0（動筆前要真素材）、S1（跑上面那支腳本到 exit 0）、S2（5 問加敘事姿態加 9 類語病，逐題自答留證）走一遍。完成時在檔尾寫一行留證標記。
+| 關卡 | 做什麼 | 主要檔案 |
+|---|---|---|
+| S0 輸入閘 | 確認 scene、授權、範圍與真實素材；素材不足就停下來問 | `SKILL.md`、`methodology/writing-harness.md` |
+| S1 機械閘 | 掃台灣用字、標點、低誤報句型與 AI residue | `scripts/taiwan-style-check.py` |
+| S2 判斷閘 | 人工檢查結構、聲音、敘事姿態、語感與 protected material | `methodology/*.md`、`scripts/protected-material-check.py` |
 
-### 3. 砍冗贅
+S1 基本用法：
 
 ```bash
-python -X utf8 scripts/verbosity-check.py "你的筆記/**/*.md" --format=markdown
+python -X utf8 scripts/taiwan-style-check.py 文章.md
+python -X utf8 scripts/taiwan-style-check.py 文章.md --public
 ```
 
-偵測歸偵測，重寫交給 `skill/tighten/` 那支 skill 派 LLM 做（偵測零 LLM token，只有重寫才花）。
+Exit `0` 代表機械檢查通過；exit `10` 會列出 findings。具有語意脈絡或高誤報風險的詞仍由 S2 判斷，不因單一 token 自動刪改。
 
-## 接進 Claude Code（讓它自動提醒）
+其他 portable scripts：
 
-把 `hooks/settings.example.json` 裡的 `hooks` 區塊併進你的 `~/.claude/settings.json`，然後**改每個 hook 檔頂部的 CONFIG 區塊**，把路徑指到你自己放長文的目錄（預設值是 placeholder）。接好以後，每次寫到那些路徑的中文長文，Claude Code 會自動提醒你還沒過三站。
+- `scripts/verbosity-check.py`：找出十類冗贅 pattern，只做偵測。
+- `scripts/rewrite-diff.py`：比較草稿與真人改稿，找出可回饋到 glossary 的規則。
 
-兩個 hook 都是 warn-only（只提醒不擋），觀察誤報乾淨後，你可以自己升級成硬擋的 Stop hook。
+## 選用 adapters
 
-## 接到別的 agent（Codex / Hermes）
+Core skill 可以獨立運作。若還需要「寫完後自動提醒」，再依 host 選擇 adapter：
 
-方法論（markdown）和檢查腳本（純 stdlib）本來就跟 agent 無關，叫任何 agent 跑 `taiwan-style-check.py` 就有 S1。要的話也可以讓 **OpenAI Codex CLI** 或 **NousResearch Hermes** 像 Claude Code 一樣「寫完自動提醒三站」——兩者都有現成接線與共用核心，放在 [`integrations/`](integrations/)：
+- `Claude Code`：repository 的 `hooks/` 與 `hooks/settings.example.json`。
+- `OpenAI Codex CLI`：`integrations/codex/`。
+- `NousResearch Hermes`：`integrations/hermes/`。
 
-- **Codex CLI**：`integrations/codex/` 的 PostToolUse hook（配 `~/.codex/config.toml`，比對 `apply_patch`）＋ `/tighten` custom prompt。
-- **Hermes**：`integrations/hermes/` 的 plugin（`post_tool_call` 觀察 ＋ `pre_llm_call` 注入）＋ 同款 `SKILL.md` 的 tighten。
+各 adapter 的安裝方式、能力差異與限制：[`integrations/README.md`](integrations/README.md)
 
-接法、各 agent 的機制差異、共用核心 `harness_core.py` 的設定，全在 [`integrations/README.md`](integrations/README.md)。
+它們不由 core installer 安裝，也不代表 Ravenquill 對所有 agent runtime 的通用相容性承諾。
 
-## 客製到你的語境
+`skill/tighten/` 是舊版 Claude-specific rewrite subskill，只供既有使用者選用；它不是 Ravenquill core，也不會由 installer 安裝。
 
-- **換語言／地區**：`taiwan-writing-glossary.md` 的 §2 對照表整段換成你那邊的判準（簡中、港繁、純學術書面都行），三站方法論不動。完整 worked example 見 [`examples/glossary-zh-cn.example.md`](examples/glossary-zh-cn.example.md)（把規則分成「通用保留／需翻轉／需調整」三類，附可直接貼的腳本常數）。
-- **改機械規則**：規則集中在 `scripts/taiwan-style-check.py` 頂部的常數區（大陸用語與低誤報禁用句型），加減一行就改了行為。
-- **你自己的口吻**：複製 `examples/content-voice-prompt.template.md`，把 `<填你的>` 換成你的範例。這是 S2 判斷「像不像你」要比對的那把尺。
+## 客製到其他語境
 
-## Harness 與 checklist 的差別
+- 替換 `methodology/taiwan-writing-glossary.md` 的地區用語判準；三道關卡不必跟著改。
+- 修改 `scripts/taiwan-style-check.py` 的規則時，每條 regex 都要有 `should flag` 與 `should allow` 行為測試。
+- 作者自己的口吻可從 `examples/content-voice-prompt.template.md` 建立；core installer 不會自動複製範本。
 
-checklist 是給人看的承諾，harness 是會執行的系統。差別有三：
+## Repository 結構
 
-1. **機械閘是程式，不是承諾**：跑不過就是跑不過，沒得通融。
-2. **判斷閘要留證**：自答結果貼出來，事後可以查核。
-3. **測試覆蓋只升不降**：每個新規則都要有 should-flag 和 should-not-flag 用例。規則可以因誤報而收窄，已知風險的回歸證據不能消失。
-
-品質地板由配對的正反例維持，不靠無限擴張黑名單。
-
-## 目錄結構
-
-```
-writing-harness/
-├─ methodology/        三站方法論 + glossary 規則手冊
-├─ scripts/            純 stdlib 檢查腳本
-├─ hooks/              2 個 Claude Code PostToolUse hook + settings 範例
-├─ integrations/       接到別的 agent：codex/、hermes/ + 共用核心 harness_core.py
-├─ skill/tighten/      bloat-busting skill
-├─ examples/           語感範本 + 兩個測試樣本（一個全是壞味道、一個乾淨）
-├─ tests/              煙霧測試
-├─ install.sh          macOS/Linux 安裝
-└─ install.ps1         Windows 安裝
+```text
+ravenquill/
+├─ SKILL.md                 agent-agnostic skill entrypoint
+├─ methodology/            三道關卡與繁中 glossary
+├─ scripts/                Python stdlib 檢查工具
+├─ hooks/                  選用 Claude Code adapter
+├─ integrations/           選用 Codex／Hermes adapters
+├─ skill/tighten/          選用 legacy Claude-specific subskill
+├─ examples/               範本與樣本
+├─ tests/                  stdlib 測試
+├─ install.sh
+└─ install.ps1
 ```
 
-## 測試
+## 驗證
 
 ```bash
+python -X utf8 tests/test_skill_package.py
+python -X utf8 tests/test_integrations.py
 python -X utf8 tests/test_harness.py
 ```
 
 ## Contributing
 
-歡迎貢獻規則與其他語境的 glossary。核心信條是「已知風險的測試證據不消失，規則可因反證收窄」，詳見 [CONTRIBUTING.md](CONTRIBUTING.md)。
+新規則必須同時保留會命中的正例與不該命中的反例。規則可以因反證收窄，已知風險的 regression evidence 不能消失。
+
+詳見：[CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## License
 
-MIT，見 [LICENSE](LICENSE)。
+MIT 授權文件：[LICENSE](LICENSE)
