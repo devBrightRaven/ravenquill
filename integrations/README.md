@@ -2,7 +2,7 @@
 
 Ravenquill core 是 repository 根目錄的 `SKILL.md`、`methodology/` 與 `scripts/`。先依根目錄 [README](../README.md) 安裝 core；支援 Agent Skills `SKILL.md` 慣例的 runtime 可直接探索，其他環境也能讀 Markdown 並執行 Python stdlib scripts。
 
-本目錄只放選用的 host adapters。它們提供自動提醒或 host-native command，不能定義 core behavior，也不能擴張 `edit_authority`、`surface_scope` 或人類的最終決定權。Core installer 不會安裝這些檔案，也不會修改 host config。
+本目錄放選用的 host adapters 與 integration mappings。Host adapters 提供自動提醒或 host-native command，不能定義 core behavior，也不能擴張 `edit_authority`、`surface_scope` 或人類的最終決定權；integration mappings 只描述外部資料如何單向交給 Ravenquill，不改變這些邊界。Core installer 不會安裝這些檔案，也不會修改 host config。
 
 ## 共用 core，不接 adapter 也能用
 
