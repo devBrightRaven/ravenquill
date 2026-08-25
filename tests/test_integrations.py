@@ -298,12 +298,38 @@ class ItoguchiPacketContract(unittest.TestCase):
                     contract.validate_packet(bad)
 
     def test_packet_rejects_unsafe_or_underspecified_source_pointers(self):
-        for pointer in ("/../../etc/passwd", "/beliefs//content", "/beliefs/content"):
+        for pointer in (
+            "/../../etc/passwd",
+            "/beliefs//content",
+            "/beliefs/content",
+            "/beliefs/0/content/extra",
+            "/beliefs/not-an-index/content",
+            "/beliefs/00/content",
+            "/beliefs/０/content",
+        ):
             with self.subTest(pointer=pointer):
                 packet = itoguchi_packet()
                 packet["authored_evidence"][0]["source"]["pointer"] = pointer
                 with self.assertRaises(contract.PacketContractError):
                     contract.validate_packet(packet)
+
+    def test_packet_rejects_noncanonical_item_ids_and_unknown_warnings(self):
+        for mutation in (
+            lambda p: p["authored_evidence"][0].update(id="x1"),
+            lambda p: p["authored_evidence"][0].update(id="a0"),
+            lambda p: p["authored_evidence"][1].update(id="a3"),
+            lambda p: p["derived_context"][0].update(id="dx"),
+            lambda p: p["derived_context"][0].update(id="d0"),
+            lambda p: p["voice_constraints"][0].update(id="a9"),
+            lambda p: p["voice_constraints"][0].update(id="d2"),
+            lambda p: p.update(warnings=["unknown_warning"]),
+            lambda p: p.update(warnings=["scene_presence_unverified", "scene_presence_unverified"]),
+        ):
+            with self.subTest(mutation=mutation):
+                bad = itoguchi_packet()
+                mutation(bad)
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(bad)
 
     def test_expected_revision_must_match(self):
         with self.assertRaises(contract.PacketContractError):

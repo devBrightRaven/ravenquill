@@ -19,6 +19,7 @@ _TOP_LEVEL_KEYS = {
     "warnings",
 }
 _QUERY_KEYS = {"holder", "resolved_holder", "as_of", "about", "persona"}
+_KNOWN_WARNINGS = {"voice_constraints_missing", "scene_presence_unverified"}
 
 _checker_path = Path(__file__).resolve().parents[2] / "scripts" / "protected-material-check.py"
 _checker_spec = importlib.util.spec_from_file_location(
@@ -77,10 +78,11 @@ def _source(value, label):
     _require(
         isinstance(pointer, str)
         and pointer.startswith("/")
-        and len(pointer_parts) >= 3
+        and len(pointer_parts) == 3
         and all(part not in ("", ".", "..") for part in pointer_parts),
         f"{label}.pointer must be a safe absolute v1 source pointer",
     )
+    _canonical_decimal(pointer_parts[1], f"{label}.pointer index")
 
 
 def _exact_keys(value, required, label, optional=()):
@@ -94,6 +96,16 @@ def _item_ids(item_ids):
     for index, item_id in enumerate(item_ids):
         _nonempty_string(item_id, f"item_ids[{index}]")
     _require(len(item_ids) == len(set(item_ids)), "item_ids must not contain duplicates")
+
+
+def _canonical_decimal(value, label):
+    _require(isinstance(value, str), f"{label} must be a string")
+    _require(value == "0" or (value.isascii() and value.isdecimal() and not value.startswith("0")), f"{label} must be a canonical decimal")
+
+
+def _canonical_id(value, prefix, index, label):
+    _nonempty_string(value, label)
+    _require(value == f"{prefix}{index}", f"{label} must be {prefix}{index}")
 
 
 def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
@@ -133,7 +145,8 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
     for index, item in enumerate(authored):
         label = f"authored_evidence[{index}]"
         _exact_keys(item, {"id", "kind", "value", "availability", "source"}, label)
-        for field in ("id", "kind", "value"):
+        _canonical_id(item["id"], "a", index + 1, f"{label}.id")
+        for field in ("kind", "value"):
             _nonempty_string(item[field], f"{label}.{field}")
         _require(item["availability"] in {"character", "writer-only"}, f"{label}.availability is unsupported")
         _source(item["source"], f"{label}.source")
@@ -143,7 +156,8 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
     for index, item in enumerate(derived):
         label = f"derived_context[{index}]"
         _exact_keys(item, {"id", "kind", "summary", "availability", "basis"}, label)
-        for field in ("id", "kind", "summary"):
+        _canonical_id(item["id"], "d", index + 1, f"{label}.id")
+        for field in ("kind", "summary"):
             _nonempty_string(item[field], f"{label}.{field}")
         _require(item["availability"] == "writer-only", f"{label}.availability must be writer-only")
         basis = item["basis"]
@@ -160,6 +174,15 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
         label = f"voice_constraints[{index}]"
         _exact_keys(item, {"id", "text", "source"}, label, optional_voice_fields)
         _nonempty_string(item["id"], f"{label}.id")
+        _require(
+            not (
+                item["id"].startswith("a")
+                and item["id"][1:].isdecimal()
+                or item["id"].startswith("d")
+                and item["id"][1:].isdecimal()
+            ),
+            f"{label}.id must not reuse authored or derived namespaces",
+        )
         _nonempty_string(item["text"], f"{label}.text")
         _source(item["source"], f"{label}.source")
         for field in ("persona", "toward"):
@@ -202,6 +225,8 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
         )
     for index, warning in enumerate(warnings):
         _nonempty_string(warning, f"warnings[{index}]")
+        _require(warning in _KNOWN_WARNINGS, f"warnings[{index}] is unsupported")
+    _require(len(warnings) == len(set(warnings)), "warnings must not contain duplicates")
     _require(
         not (voices and "voice_constraints_missing" in warnings),
         "voice_constraints_missing contradicts supplied voice constraints",
