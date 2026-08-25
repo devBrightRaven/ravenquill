@@ -365,6 +365,60 @@ class TaiwanStyleCheck(unittest.TestCase):
 
 
 class ProtectedMaterialCheck(unittest.TestCase):
+    def test_non_http_uri_literals_reject_suffix_drift_without_reclassifying_colon_text(self):
+        for uri, changed in (
+            ("mailto:test@example.com", "mailto:test@example.com?subject=hi"),
+            ("tel:+886212345678", "tel:+886212345678;ext=9"),
+        ):
+            with self.subTest(uri=uri):
+                before = write_tmp(uri)
+                after = write_tmp(changed)
+                manifest = write_manifest([{"value": uri, "count": 1}])
+                try:
+                    self.assertEqual(run(PROTECTED, manifest, before, before).returncode, 0)
+                    self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+                finally:
+                    manifest.unlink(missing_ok=True); before.unlink(missing_ok=True); after.unlink(missing_ok=True)
+
+        colon_text = "note:value"
+        before = write_tmp(colon_text)
+        after = write_tmp(f"{colon_text}-extra")
+        manifest = write_manifest([{"value": colon_text, "count": 1}])
+        try:
+            self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 0)
+        finally:
+            manifest.unlink(missing_ok=True); before.unlink(missing_ok=True); after.unlink(missing_ok=True)
+
+    def test_markdown_link_titles_end_the_protected_url_destination(self):
+        url = "https://example.com/a"
+        manifest = write_manifest([{"value": url, "count": 1}])
+        try:
+            for title in ('"title"', "'title'", "(title)"):
+                with self.subTest(title=title):
+                    text = write_tmp(f"[活動頁]({url} {title})")
+                    try:
+                        self.assertEqual(run(PROTECTED, manifest, text, text).returncode, 0)
+                    finally:
+                        text.unlink(missing_ok=True)
+
+            before = write_tmp(f'[活動頁]({url} "title")')
+            changed = (
+                f'[活動頁]({url}?subject=hi "title")',
+                f"[活動頁]({url} title)",
+            )
+            try:
+                for text in changed:
+                    with self.subTest(text=text):
+                        after = write_tmp(text)
+                        try:
+                            self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+                        finally:
+                            after.unlink(missing_ok=True)
+            finally:
+                before.unlink(missing_ok=True)
+        finally:
+            manifest.unlink(missing_ok=True)
+
     def test_digit_bearing_literals_reject_numeric_token_extensions(self):
         for value, changed in (("500", "500.00"), ("8/30", "8/30/2026")):
             with self.subTest(value=value):

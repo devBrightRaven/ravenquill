@@ -15,7 +15,11 @@ AI_TRACKING_SEGMENTS = {
     "utm_source=openai",
     "referrer=grok.com",
 }
-URL_SCHEME_RE = re.compile(r"^https?://", re.IGNORECASE)
+HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
+URI_LITERAL_RE = re.compile(r"^(?:https?://|mailto:|tel:)", re.IGNORECASE)
+LINK_TITLE_TRAILER_RE = re.compile(
+    r'''^[ \t\r\n]+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^)\\])*\))\)'''
+)
 URL_BOUNDARY = set(" \t\r\n<>\"'「」『』，。；：！？")
 URL_LEFT_BOUNDARY = URL_BOUNDARY
 DIGIT_JOINERS = set(".,/:+-")
@@ -65,7 +69,7 @@ def load_manifest(path):
         cleanup = item.get("allow_ai_tracking_cleanup", False)
         if type(cleanup) is not bool:
             raise ValueError("allow_ai_tracking_cleanup must be a boolean")
-        if cleanup and not URL_SCHEME_RE.match(value):
+        if cleanup and not HTTP_URL_RE.match(value):
             raise ValueError("allow_ai_tracking_cleanup is valid only for a full URL")
     return items
 
@@ -88,13 +92,18 @@ def count_url_literal(text, value):
         left_ticks = len(text[:index]) - len(text[:index].rstrip("`"))
         right_ticks = len(text[end:]) - len(text[end:].lstrip("`"))
         paired_wrapper = paired_wrapper or (left_ticks > 0 and left_ticks == right_ticks)
-        if (left_ok and right_ok) or paired_wrapper:
+        titled_link = (
+            index >= 2
+            and text[index - 2 : index] == "]("
+            and LINK_TITLE_TRAILER_RE.match(text[end:])
+        )
+        if (left_ok and right_ok) or paired_wrapper or titled_link:
             count += 1
         start = index + 1
 
 
 def count_value(text, value):
-    if URL_SCHEME_RE.match(value):
+    if URI_LITERAL_RE.match(value):
         return count_url_literal(text, value)
     if re.search(r"\d", value):
         count = 0
