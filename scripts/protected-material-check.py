@@ -16,7 +16,7 @@ AI_TRACKING_SEGMENTS = {
     "referrer=grok.com",
 }
 HTTP_URL_RE = re.compile(r"^https?://", re.IGNORECASE)
-URI_LITERAL_RE = re.compile(r"^(?:https?://|mailto:|tel:)", re.IGNORECASE)
+URI_LITERAL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 LINK_TITLE_TRAILER_RE = re.compile(
     r'''^[ \t\r\n]+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^)\\])*\))\)'''
 )

@@ -26,7 +26,7 @@ REQUIRED = (
     "scripts/taiwan-style-check.py",
     "scripts/protected-material-check.py",
 )
-EXCLUDED = ("hooks", "integrations", "skill", "tighten")
+EXCLUDED = ("hooks", "integrations", "skill", "tighten", "examples")
 
 
 def bash_path(path: Path, style: str) -> str:

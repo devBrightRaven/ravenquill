@@ -365,10 +365,13 @@ class TaiwanStyleCheck(unittest.TestCase):
 
 
 class ProtectedMaterialCheck(unittest.TestCase):
-    def test_non_http_uri_literals_reject_suffix_drift_without_reclassifying_colon_text(self):
+    def test_rfc_scheme_uri_literals_reject_suffix_drift(self):
         for uri, changed in (
             ("mailto:test@example.com", "mailto:test@example.com?subject=hi"),
             ("tel:+886212345678", "tel:+886212345678;ext=9"),
+            ("steam://rungameid/123", "steam://rungameid/123?launch=1"),
+            ("custom+app.foo:resource/path", "custom+app.foo:resource/path?mode=fast"),
+            ("URN:isbn:9780141036144", "URN:isbn:9780141036144?edition=2"),
         ):
             with self.subTest(uri=uri):
                 before = write_tmp(uri)
@@ -384,6 +387,15 @@ class ProtectedMaterialCheck(unittest.TestCase):
         before = write_tmp(colon_text)
         after = write_tmp(f"{colon_text}-extra")
         manifest = write_manifest([{"value": colon_text, "count": 1}])
+        try:
+            self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 10)
+        finally:
+            manifest.unlink(missing_ok=True); before.unlink(missing_ok=True); after.unlink(missing_ok=True)
+
+        non_uri = "欄位:value"
+        before = write_tmp(non_uri)
+        after = write_tmp(f"{non_uri}-extra")
+        manifest = write_manifest([{"value": non_uri, "count": 1}])
         try:
             self.assertEqual(run(PROTECTED, manifest, before, after).returncode, 0)
         finally:
