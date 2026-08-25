@@ -20,10 +20,14 @@ CODEX_TIER = INTEGRATIONS / "codex" / "output-tier-gate.py"
 HERMES_PLUGIN = INTEGRATIONS / "hermes" / "writing_harness_plugin.py"
 PY = sys.executable
 REWRITE_DIFF = ROOT / "scripts" / "rewrite-diff.py"
+PACKET_CONTRACT = INTEGRATIONS / "itoguchi" / "packet_contract.py"
 
 sys.path.insert(0, str(INTEGRATIONS))
 import harness_core as core  # noqa: E402
-from itoguchi import packet_contract as contract  # noqa: E402
+
+spec = importlib.util.spec_from_file_location("ravenquill_packet_contract", PACKET_CONTRACT)
+contract = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(contract)
 
 
 def itoguchi_packet():
@@ -303,6 +307,12 @@ class ItoguchiPacketContract(unittest.TestCase):
             itoguchi_packet(), "原稿保留：開始懷疑我的人。開始懷疑我的人。", ["a1"]
         )
         self.assertEqual(selected, [{"value": "開始懷疑我的人", "count": 2}])
+        self.assertEqual(
+            contract.select_protected_items(
+                itoguchi_packet(), "原稿保留：陳永仁是警方臥底。", ["a2"]
+            ),
+            [{"value": "陳永仁是警方臥底", "count": 1}],
+        )
         with self.assertRaises(contract.PacketContractError):
             contract.select_protected_items(itoguchi_packet(), "原稿", ["d1"])
         with self.assertRaises(contract.PacketContractError):
