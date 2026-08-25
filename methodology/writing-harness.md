@@ -19,14 +19,17 @@
 
 寫之前先記錄：
 
-- `scene`：`social`／`newsletter`／`sales`／`customer-service`／`office-report`／`general`
+- `scene`：`fiction`／`social`／`newsletter`／`sales`／`customer-service`／`office-report`／`general`
 - `edit_authority`：`review-only`／`propose`／`apply`
 - `surface_scope`：本次允許檢視或修改的檔案、段落、欄位或輸出面
+- `source_evidence`：fiction pass 使用的 authored story evidence／`none`（可選）
 - `protected_material`：`<manifest.json>`／`none`
 
 `review-only` 禁止寫入；`propose` 只能提供候選修改；`apply` 只能在 `surface_scope` 內寫入。人類保留最終採用、拒絕與發布決定。
 
-接著問：這篇要不要**真實場景／案例／引述對白／數字**？
+若 `scene: fiction`，S0 確認 `source_evidence` 涵蓋本次故事證據；它界定 authored facts、角色知識與 canon，不要求 nonfiction 真實案例或可外部驗證的公開主張，packet-external 內容維持 unresolved。`new character dialogue` 必須有 supplied authored voice constraints，否則 `BLOCK`；既有對白可 review 或 edit，但缺少 constraints 時 S2 固定寫 `voice fidelity: unverified`。
+
+對非 fiction 的 scene，接著問：這篇要不要**真實場景／案例／引述對白／數字**？
 
 - 要 → 有沒有可用的真實（可匿名）素材？
   - 有 → 進 S1 區的撰寫
@@ -73,6 +76,8 @@ exit 0 才算過（exit 0 是程式回報「全部通過」的慣例，非 0 代
 ## S2 判斷閘（草稿後，強制自審＋留證）
 
 腳本抓不到的問題（文章結構、作者聲音、敘事姿態、台灣語感、有沒有編造）只能靠人判斷。**逐項自答，並把結果貼進回覆**，才能宣告完成。把答案貼出來就是「留證」：留下一份事後能回頭檢查的證據，而不是一句「我檢查過了」就算數。
+
+若 `scene: fiction`，S2 報告 `knowledge fidelity`（知識↔`source_evidence`）、`canon fidelity`（人物、關係、事件↔authored evidence）與 `voice fidelity`（constraints 比對結果）。既有對白缺少 constraints 時固定為 `voice fidelity: unverified`；缺少 constraints 的新 `new character dialogue` 已在 S0 `BLOCK`。
 
 > 這裡的「敘事姿態」指作者在文章裡站的位置：是把場景擺出來讓讀者自己下判斷，還是急著用形容詞替讀者定性。前者像人寫的，後者是 AI 的慣性。下面 2b 會展開怎麼自查。
 
@@ -149,6 +154,7 @@ S2 判斷閘：
     artifacts=<實際 manifest/before/after 路徑|none>
     result=<實際 exit code|manual exact-literal comparison>
     unresolved URL decisions=<保持原樣、待人類決定的 variants|none>
+  2g fiction：knowledge fidelity=…；canon fidelity=…；voice fidelity=…
 ```
 
 Exit code 只能來自實際以這三份 artifacts 執行過的 command。純聊天或模擬改寫要寫 `checker=not executed`，改報 manual exact-literal comparison。三道核心關卡任一未過或留證缺項＝未完成。條件式 review 若觸發，其 findings 也必須處理。

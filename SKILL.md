@@ -12,9 +12,10 @@ Preserve the human author's facts, voice, and decision authority while making wr
 Before reviewing or editing, record:
 
 ```text
-scene: social | newsletter | sales | customer-service | office-report | general
+scene: fiction | social | newsletter | sales | customer-service | office-report | general
 edit_authority: review-only | propose | apply
 surface_scope: <files, sections, fields, or output covered by this pass>
+source_evidence: <authored story evidence | none>  # optional for fiction
 protected_material: <manifest.json | none>
 ```
 
@@ -22,6 +23,8 @@ protected_material: <manifest.json | none>
 - `propose`: provide candidate changes; do not apply them.
 - `apply`: write only inside `surface_scope`.
 - The human decides what to accept, save, and publish. Hooks and integrations may remind or report, but cannot expand authority or scope.
+
+For `scene: fiction`, use supplied authored story evidence instead of nonfiction real-case or public-claim requirements. Keep packet-external facts, beliefs, character knowledge, canon, and voice constraints unresolved. New character dialogue requires supplied authored voice constraints and is blocked without them. Existing dialogue may be reviewed or edited with exactly `voice fidelity: unverified` when constraints are absent.
 
 Read [methodology/writing-harness.md](methodology/writing-harness.md) for the S0/S1/S2 gates. For Taiwan-facing Traditional Chinese, also read [methodology/taiwan-writing-glossary.md](methodology/taiwan-writing-glossary.md).
 
