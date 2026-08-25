@@ -24,6 +24,13 @@ Ravenquill core 是 repository 根目錄的 `SKILL.md`、`methodology/` 與 `scr
 
 提醒型 adapter 都是 warn-only。提醒不代表通過檢查，也不授權 adapter 修改內容。
 
+## Itoguchi authored scene evidence（選用）
+
+[Itoguchi 故事證據整合](itoguchi/README.md) 把 Itoguchi 的唯讀、版本化
+`scene_evidence` packet 單向交給 Ravenquill 的 fiction 流程使用。這是
+runtime-neutral 的選用文件，不是 host adapter；它不安裝 runtime 設定、不改變
+core，也不授予 story card 或草稿的編輯權限。
+
 ## `OpenAI Codex CLI`（選用）
 
 1. Clone repository，先安裝或直接使用 agent-agnostic core。
