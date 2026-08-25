@@ -12,6 +12,13 @@ package；這個整合不屬於 Ravenquill core。
 1. **查詢新 packet。** 向 Itoguchi 查詢 `scene_evidence`，明確提供 intended
    holder、`as_of`、target（對應 packet query 的 `about`）與 persona。
 
+   若 packet 的 warnings 含 `scene_presence_unverified`，packet 仍可供與場景成員
+   無關的 evidence 使用；但任何依賴誰在場的假設或生成（包括 new named-character
+   dialogue）都保持 unresolved，直到人類或作者確認出場人物。既有對白仍可 review
+   或 edit；若沒有符合 query 的 voice constraint，固定回報
+   `voice fidelity: unverified`。這個 warning 與 validator 都不證明 presence、語意
+   或 voice quality。
+
 2. **驗證版本與 revision。** 使用 [packet contract helper](packet_contract.py)
    驗證 `itoguchi.scene-evidence/v1`。要重用已保存的 packet 時，先重新查詢
    同一場景，再比較兩者的 `story_revision`；不一致就丟棄舊 packet，不得繼續
@@ -34,8 +41,10 @@ package；這個整合不屬於 Ravenquill core。
    儲存與發布。
 
 4. **先確認 authored voice constraint。** 若要替 named character 寫新的對白，
-   沒有符合查詢條件的 authored voice constraint 就停止，不能從 belief、情緒、
-   既有對白或模型熟悉度自行推導。既有對白仍可 review 或 edit，但必須回報
+   只有 Itoguchi 依 holder、`as_of`、target 與 persona 篩選後提供的 constraint
+   才算符合；`voice_constraints` 非空本身不代表可套用到其他 query。沒有符合查詢
+   條件的 authored voice constraint 就停止，不能從 belief、情緒、既有對白或模型
+   熟悉度自行推導。既有對白仍可 review 或 edit，但必須回報
    `voice fidelity: unverified`。
 
 5. **只保護草稿裡確實出現的 authored literal。** 先保存 pre-edit draft，再
