@@ -23,6 +23,68 @@ REWRITE_DIFF = ROOT / "scripts" / "rewrite-diff.py"
 
 sys.path.insert(0, str(INTEGRATIONS))
 import harness_core as core  # noqa: E402
+from itoguchi import packet_contract as contract  # noqa: E402
+
+
+def itoguchi_packet():
+    return {
+        "contract": "itoguchi.scene-evidence/v1",
+        "story_revision": "sha256:" + "a" * 64,
+        "query": {
+            "holder": "陳永仁",
+            "resolved_holder": "陳永仁",
+            "as_of": 18,
+            "about": "韓琛",
+            "persona": "古惑仔",
+        },
+        "authored_evidence": [
+            {
+                "id": "a1",
+                "kind": "belief",
+                "value": "開始懷疑我的人",
+                "availability": "character",
+                "source": {
+                    "path": "chen_wing_yan.md",
+                    "pointer": "/beliefs/1/content",
+                },
+            },
+            {
+                "id": "a2",
+                "kind": "belief",
+                "value": "陳永仁是警方臥底",
+                "availability": "writer-only",
+                "source": {
+                    "path": "hon_sam.md",
+                    "pointer": "/beliefs/0/content",
+                },
+            },
+        ],
+        "derived_context": [
+            {
+                "id": "d1",
+                "kind": "tension",
+                "summary": "正在維持謊言",
+                "availability": "writer-only",
+                "basis": ["a1"],
+            }
+        ],
+        "voice_constraints": [
+            {
+                "id": "v1",
+                "text": "對韓琛說話時避免完整交代動機",
+                "persona": "古惑仔",
+                "toward": "韓琛",
+                "since": 1,
+                "until": None,
+                "conflicts_with": [],
+                "source": {
+                    "path": "chen_wing_yan.md",
+                    "pointer": "/voice_constraints/0/text",
+                },
+            }
+        ],
+        "warnings": [],
+    }
 
 
 def md_under(dirname, text="這是一段需要過三站的中文長文，先放著。\n"):
@@ -182,6 +244,116 @@ class HermesPlugin(unittest.TestCase):
         self.assertIn("writing-harness", injected["context"])
         # queue drained — next turn injects nothing
         self.assertIsNone(self.plugin._inject_pending())
+
+
+class ItoguchiPacketContract(unittest.TestCase):
+    def test_itoguchi_packet_accepts_v1_and_rejects_unsafe_items(self):
+        contract.validate_packet(itoguchi_packet())
+        for mutation in (
+            lambda p: p.update(contract="itoguchi.scene-evidence/v2"),
+            lambda p: p.pop("story_revision"),
+            lambda p: p.update(story_revision="sha256:not-a-revision"),
+            lambda p: p["authored_evidence"][0].pop("source"),
+            lambda p: p["authored_evidence"][0]["source"].update(
+                path="C:/stories/chen_wing_yan.md"
+            ),
+            lambda p: p["authored_evidence"][0]["source"].update(
+                path="../chen_wing_yan.md"
+            ),
+            lambda p: p["authored_evidence"][0]["source"].pop("pointer"),
+            lambda p: p["authored_evidence"][0].update(availability="reader"),
+            lambda p: p["derived_context"][0].update(id="a1"),
+            lambda p: p["derived_context"][0].update(basis=[]),
+            lambda p: p["derived_context"][0].update(basis=["missing"]),
+            lambda p: p["voice_constraints"][0].update(conflicts_with="v2"),
+            lambda p: p.update(warnings="voice_constraints_missing"),
+            lambda p: p.update(unexpected=True),
+        ):
+            with self.subTest(mutation=mutation):
+                bad = itoguchi_packet()
+                mutation(bad)
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(bad)
+
+    def test_packet_rejects_wrong_structure_types(self):
+        for mutation in (
+            lambda p: p.update(query=[]),
+            lambda p: p["query"].update(as_of=True),
+            lambda p: p.update(authored_evidence={}),
+            lambda p: p["authored_evidence"][0].update(value=""),
+            lambda p: p["derived_context"][0].update(availability="character"),
+            lambda p: p["voice_constraints"][0].update(text=""),
+            lambda p: p["voice_constraints"][0].update(since="1"),
+            lambda p: p.update(warnings=[1]),
+        ):
+            with self.subTest(mutation=mutation):
+                bad = itoguchi_packet()
+                mutation(bad)
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(bad)
+
+    def test_expected_revision_must_match(self):
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(
+                itoguchi_packet(), expected_revision="sha256:" + "b" * 64
+            )
+
+    def test_protected_selection_uses_only_present_authored_literals(self):
+        selected = contract.select_protected_items(
+            itoguchi_packet(), "原稿保留：開始懷疑我的人。開始懷疑我的人。", ["a1"]
+        )
+        self.assertEqual(selected, [{"value": "開始懷疑我的人", "count": 2}])
+        with self.assertRaises(contract.PacketContractError):
+            contract.select_protected_items(itoguchi_packet(), "原稿", ["d1"])
+        with self.assertRaises(contract.PacketContractError):
+            contract.select_protected_items(itoguchi_packet(), "原稿", ["a1"])
+
+    def test_voice_constraint_passes_through_exact_text(self):
+        text = "對韓琛說話時避免完整交代動機"
+        self.assertEqual(
+            contract.select_protected_items(itoguchi_packet(), text, ["v1"]),
+            [{"value": text, "count": 1}],
+        )
+
+    def test_character_availability_rejects_writer_only_and_derived_ids(self):
+        contract.require_character_available(itoguchi_packet(), ["a1"])
+        for item_id in ("a2", "d1", "v1"):
+            with self.subTest(item_id=item_id):
+                with self.assertRaises(contract.PacketContractError):
+                    contract.require_character_available(
+                        itoguchi_packet(), [item_id]
+                    )
+
+    def test_declared_active_voice_conflict_is_rejected(self):
+        packet = itoguchi_packet()
+        packet["voice_constraints"].append(
+            {
+                "id": "v2",
+                "text": "對韓琛說話時完整交代動機",
+                "conflicts_with": [],
+                "source": {
+                    "path": "chen_wing_yan.md",
+                    "pointer": "/voice_constraints/1/text",
+                },
+            }
+        )
+        packet["voice_constraints"][0]["conflicts_with"] = ["v2"]
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+    def test_voice_status_requires_constraints_for_new_dialogue(self):
+        self.assertEqual(
+            contract.voice_status(itoguchi_packet(), writing_new_dialogue=True),
+            "voice fidelity: verified against supplied constraints",
+        )
+        packet = itoguchi_packet()
+        packet["voice_constraints"] = []
+        with self.assertRaises(contract.PacketContractError):
+            contract.voice_status(packet, writing_new_dialogue=True)
+        self.assertEqual(
+            contract.voice_status(packet, writing_new_dialogue=False),
+            "voice fidelity: unverified",
+        )
 
 
 if __name__ == "__main__":
