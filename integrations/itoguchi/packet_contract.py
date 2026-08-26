@@ -20,6 +20,16 @@ _TOP_LEVEL_KEYS = {
 }
 _QUERY_KEYS = {"holder", "resolved_holder", "as_of", "about", "persona"}
 _KNOWN_WARNINGS = {"voice_constraints_missing", "scene_presence_unverified"}
+_AUTHORED_POINTERS = {
+    "belief": ("beliefs", {"content"}),
+    "fact": ("facts", {"content"}),
+    "emotion": ("emotional_state", {"state"}),
+    "agenda": ("agenda", {"goal"}),
+    "relation": ("relations", {"surface", "hidden_tension", "secret_asymmetry"}),
+    "nested_belief": ("nested_beliefs", {"believes_content"}),
+    "deception": ("deceptions", {"lie"}),
+    "persona": ("personas", {"id"}),
+}
 
 _checker_path = Path(__file__).resolve().parents[2] / "scripts" / "protected-material-check.py"
 _checker_spec = importlib.util.spec_from_file_location(
@@ -60,29 +70,32 @@ def _revision(value, label):
     )
 
 
-def _source(value, label):
+def _source(value, label, collection, fields):
     _require(isinstance(value, dict), f"{label} must be an object")
     _require(set(value) == {"path", "pointer"}, f"{label} must contain only path and pointer")
     path = value.get("path")
     _nonempty_string(path, f"{label}.path")
-    normalized = path.replace("\\", "/")
-    parts = normalized.split("/")
+    parts = path.split("/")
     _require(
-        not normalized.startswith("/")
-        and not (len(normalized) > 1 and normalized[1] == ":")
+        "\\" not in path
+        and ":" not in path
+        and not any(ord(char) < 32 or ord(char) == 127 for char in path)
         and all(part not in ("", ".", "..") for part in parts),
-        f"{label}.path must be a safe relative path",
+        f"{label}.path must be a portable relative path",
     )
+    _require(parts[-1].endswith(".md"), f"{label}.path must end with .md")
     pointer = value.get("pointer")
     pointer_parts = pointer[1:].split("/") if isinstance(pointer, str) else []
     _require(
         isinstance(pointer, str)
         and pointer.startswith("/")
         and len(pointer_parts) == 3
-        and all(part not in ("", ".", "..") for part in pointer_parts),
-        f"{label}.pointer must be a safe absolute v1 source pointer",
+        and pointer_parts[0] == collection
+        and pointer_parts[2] in fields,
+        f"{label}.pointer does not match its v1 authority",
     )
     _canonical_decimal(pointer_parts[1], f"{label}.pointer index")
+    return path, pointer
 
 
 def _exact_keys(value, required, label, optional=()):
@@ -142,14 +155,22 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
         _require(isinstance(collection, list), f"{label} must be a list")
 
     all_ids = []
+    sources = []
     for index, item in enumerate(authored):
         label = f"authored_evidence[{index}]"
         _exact_keys(item, {"id", "kind", "value", "availability", "source"}, label)
         _canonical_id(item["id"], "a", index + 1, f"{label}.id")
         for field in ("kind", "value"):
             _nonempty_string(item[field], f"{label}.{field}")
-        _require(item["availability"] in {"character", "writer-only"}, f"{label}.availability is unsupported")
-        _source(item["source"], f"{label}.source")
+        _require(item["kind"] in _AUTHORED_POINTERS, f"{label}.kind is unsupported")
+        _require(
+            isinstance(item["availability"], str)
+            and item["availability"] in {"character", "writer-only"},
+            f"{label}.availability is unsupported",
+        )
+        sources.append(
+            _source(item["source"], f"{label}.source", *_AUTHORED_POINTERS[item["kind"]])
+        )
         all_ids.append(item["id"])
 
     authored_ids = set(all_ids)
@@ -159,6 +180,7 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
         _canonical_id(item["id"], "d", index + 1, f"{label}.id")
         for field in ("kind", "summary"):
             _nonempty_string(item[field], f"{label}.{field}")
+        _require(item["kind"] == "tension", f"{label}.kind must be tension")
         _require(item["availability"] == "writer-only", f"{label}.availability must be writer-only")
         basis = item["basis"]
         _require(isinstance(basis, list) and basis, f"{label}.basis must be a non-empty list")
@@ -177,14 +199,23 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
         _require(
             not (
                 item["id"].startswith("a")
+                and item["id"][1:].isascii()
                 and item["id"][1:].isdecimal()
                 or item["id"].startswith("d")
+                and item["id"][1:].isascii()
                 and item["id"][1:].isdecimal()
             ),
             f"{label}.id must not reuse authored or derived namespaces",
         )
         _nonempty_string(item["text"], f"{label}.text")
-        _source(item["source"], f"{label}.source")
+        sources.append(
+            _source(
+                item["source"],
+                f"{label}.source",
+                "voice_constraints",
+                {"text"},
+            )
+        )
         for field in ("persona", "toward"):
             if field in item:
                 _nonempty_string(item[field], f"{label}.{field}")
@@ -218,6 +249,8 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
 
     duplicates = [item_id for item_id, count in Counter(all_ids).items() if count > 1]
     _require(not duplicates, f"packet item IDs must be unique: {duplicates}")
+    duplicate_sources = [source for source, count in Counter(sources).items() if count > 1]
+    _require(not duplicate_sources, f"packet sources must be unique: {duplicate_sources}")
     for item in voices:
         _require(
             not (set(item.get("conflicts_with", [])) & voice_ids),
@@ -228,8 +261,8 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
         _require(warning in _KNOWN_WARNINGS, f"warnings[{index}] is unsupported")
     _require(len(warnings) == len(set(warnings)), "warnings must not contain duplicates")
     _require(
-        not (voices and "voice_constraints_missing" in warnings),
-        "voice_constraints_missing contradicts supplied voice constraints",
+        (not voices) == ("voice_constraints_missing" in warnings),
+        "voice_constraints_missing must match supplied voice constraints",
     )
 
 

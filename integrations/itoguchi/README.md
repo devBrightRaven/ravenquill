@@ -71,6 +71,8 @@ package；這個整合不屬於 Ravenquill core。
 ## 公開 helper 與邊界
 
 [packet_contract.py](packet_contract.py) 是這個選用整合的公開 consumer surface：
+這個 adapter 只支援在完整 Ravenquill repository 內使用，並依賴 repository 內既有的
+`scripts/protected-material-check.py`。單獨複製 `packet_contract.py` 不受支援。
 
 | Helper | 用途 |
 |---|---|

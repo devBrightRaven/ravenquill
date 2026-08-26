@@ -313,6 +313,110 @@ class ItoguchiPacketContract(unittest.TestCase):
                 with self.assertRaises(contract.PacketContractError):
                     contract.validate_packet(packet)
 
+    def test_packet_accepts_only_producer_authored_pointer_mappings(self):
+        valid = (
+            ("belief", "/beliefs/0/content"),
+            ("fact", "/facts/0/content"),
+            ("emotion", "/emotional_state/0/state"),
+            ("agenda", "/agenda/0/goal"),
+            ("relation", "/relations/0/surface"),
+            ("relation", "/relations/0/hidden_tension"),
+            ("relation", "/relations/0/secret_asymmetry"),
+            ("nested_belief", "/nested_beliefs/0/believes_content"),
+            ("deception", "/deceptions/0/lie"),
+            ("persona", "/personas/0/id"),
+        )
+        for kind, pointer in valid:
+            with self.subTest(kind=kind, pointer=pointer):
+                packet = itoguchi_packet()
+                packet["authored_evidence"][0]["kind"] = kind
+                packet["authored_evidence"][0]["source"]["pointer"] = pointer
+                contract.validate_packet(packet)
+
+        for kind, pointer in (
+            ("belief", "/beliefs/0/state"),
+            ("fact", "/beliefs/0/content"),
+            ("relation", "/relations/0/content"),
+            ("unknown", "/beliefs/0/content"),
+        ):
+            with self.subTest(kind=kind, pointer=pointer):
+                packet = itoguchi_packet()
+                packet["authored_evidence"][0]["kind"] = kind
+                packet["authored_evidence"][0]["source"]["pointer"] = pointer
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
+
+    def test_packet_accepts_only_producer_voice_and_derived_kinds(self):
+        for pointer in (
+            "/beliefs/0/content",
+            "/voice_constraints/0/id",
+            "/voice_constraints/00/text",
+            "/voice_constraints/０/text",
+        ):
+            with self.subTest(pointer=pointer):
+                packet = itoguchi_packet()
+                packet["voice_constraints"][0]["source"]["pointer"] = pointer
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
+
+        packet = itoguchi_packet()
+        packet["derived_context"][0]["kind"] = "summary"
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+    def test_packet_accepts_only_portable_producer_source_paths(self):
+        packet = itoguchi_packet()
+        packet["authored_evidence"][0]["source"]["path"] = "cast/chen wing yan.md"
+        contract.validate_packet(packet)
+
+        for path in (
+            "",
+            "/chen_wing_yan.md",
+            "C:/chen_wing_yan.md",
+            "cast\\chen_wing_yan.md",
+            "cast:chen_wing_yan.md",
+            "cast//chen_wing_yan.md",
+            "./chen_wing_yan.md",
+            "cast/../chen_wing_yan.md",
+            "chen_wing_yan.MD",
+            "chen_wing_yan.md.txt",
+            "chen\x00wing\x1fyan.md",
+            "chen\x7fwing_yan.md",
+        ):
+            with self.subTest(path=repr(path)):
+                packet = itoguchi_packet()
+                packet["authored_evidence"][0]["source"]["path"] = path
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
+
+    def test_packet_rejects_duplicate_source_authority_entries(self):
+        packet = itoguchi_packet()
+        packet["authored_evidence"][1]["source"] = dict(
+            packet["authored_evidence"][0]["source"]
+        )
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+        packet = itoguchi_packet()
+        duplicate = dict(packet["voice_constraints"][0])
+        duplicate["id"] = "v2"
+        duplicate["conflicts_with"] = []
+        packet["voice_constraints"].append(duplicate)
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+    def test_packet_wraps_unhashable_contract_values(self):
+        for mutation in (
+            lambda p: p["authored_evidence"][0].update(availability=[]),
+            lambda p: p["authored_evidence"][0].update(kind=[]),
+            lambda p: p.update(warnings=[[]]),
+        ):
+            with self.subTest(mutation=mutation):
+                packet = itoguchi_packet()
+                mutation(packet)
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
+
     def test_packet_rejects_noncanonical_item_ids_and_unknown_warnings(self):
         for mutation in (
             lambda p: p["authored_evidence"][0].update(id="x1"),
@@ -330,6 +434,10 @@ class ItoguchiPacketContract(unittest.TestCase):
                 mutation(bad)
                 with self.assertRaises(contract.PacketContractError):
                     contract.validate_packet(bad)
+
+        packet = itoguchi_packet()
+        packet["voice_constraints"][0]["id"] = "a１"
+        contract.validate_packet(packet)
 
     def test_expected_revision_must_match(self):
         with self.assertRaises(contract.PacketContractError):
@@ -466,6 +574,11 @@ class ItoguchiPacketContract(unittest.TestCase):
         with self.assertRaises(contract.PacketContractError):
             contract.validate_packet(packet)
 
+        packet = itoguchi_packet()
+        packet["voice_constraints"] = []
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
     def test_unverified_scene_presence_blocks_only_new_dialogue_certification(self):
         packet = itoguchi_packet()
         packet["warnings"] = ["scene_presence_unverified"]
@@ -487,6 +600,7 @@ class ItoguchiPacketContract(unittest.TestCase):
         )
         packet = itoguchi_packet()
         packet["voice_constraints"] = []
+        packet["warnings"] = ["voice_constraints_missing"]
         with self.assertRaises(contract.PacketContractError):
             contract.voice_status(packet, writing_new_dialogue=True)
         self.assertEqual(
