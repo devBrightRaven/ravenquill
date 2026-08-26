@@ -365,9 +365,18 @@ class ItoguchiPacketContract(unittest.TestCase):
             contract.validate_packet(packet)
 
     def test_packet_accepts_only_portable_producer_source_paths(self):
-        packet = itoguchi_packet()
-        packet["authored_evidence"][0]["source"]["path"] = "cast/chen wing yan.md"
-        contract.validate_packet(packet)
+        for path in (
+            "cast/chen wing yan.md",
+            "conifer.md",
+            "com0.md",
+            "COM10.md",
+            "lpt10.md",
+            "auxiliary/card.md",
+        ):
+            with self.subTest(path=path):
+                packet = itoguchi_packet()
+                packet["authored_evidence"][0]["source"]["path"] = path
+                contract.validate_packet(packet)
 
         for path in (
             "",
@@ -375,9 +384,23 @@ class ItoguchiPacketContract(unittest.TestCase):
             "C:/chen_wing_yan.md",
             "cast\\chen_wing_yan.md",
             "cast:chen_wing_yan.md",
+            "card<draft>.md",
+            "card>draft.md",
+            "card\"draft.md",
+            "card|draft.md",
+            "card?draft.md",
+            "card*draft.md",
             "cast//chen_wing_yan.md",
             "./chen_wing_yan.md",
             "cast/../chen_wing_yan.md",
+            "cast./chen_wing_yan.md",
+            "cast /chen_wing_yan.md",
+            "CON.md",
+            "prn.story.md",
+            "cast/AuX.md",
+            "nul/chen_wing_yan.md",
+            "COM1.md",
+            "lpt9.backup.md",
             "chen_wing_yan.MD",
             "chen_wing_yan.md.txt",
             "chen\x00wing\x1fyan.md",
@@ -388,6 +411,13 @@ class ItoguchiPacketContract(unittest.TestCase):
                 packet["authored_evidence"][0]["source"]["path"] = path
                 with self.assertRaises(contract.PacketContractError):
                     contract.validate_packet(packet)
+
+    def test_packet_rejects_casefold_colliding_source_paths(self):
+        packet = itoguchi_packet()
+        packet["authored_evidence"][1]["source"]["path"] = "CHEN_WING_YAN.md"
+
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
 
     def test_packet_rejects_duplicate_source_authority_entries(self):
         packet = itoguchi_packet()
@@ -435,9 +465,12 @@ class ItoguchiPacketContract(unittest.TestCase):
                 with self.assertRaises(contract.PacketContractError):
                     contract.validate_packet(bad)
 
-        packet = itoguchi_packet()
-        packet["voice_constraints"][0]["id"] = "a１"
-        contract.validate_packet(packet)
+        for voice_id in ("a１", "d１"):
+            with self.subTest(voice_id=voice_id):
+                packet = itoguchi_packet()
+                packet["voice_constraints"][0]["id"] = voice_id
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
 
     def test_expected_revision_must_match(self):
         with self.assertRaises(contract.PacketContractError):

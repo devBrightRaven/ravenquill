@@ -20,6 +20,12 @@ _TOP_LEVEL_KEYS = {
 }
 _QUERY_KEYS = {"holder", "resolved_holder", "as_of", "about", "persona"}
 _KNOWN_WARNINGS = {"voice_constraints_missing", "scene_presence_unverified"}
+_WINDOWS_FORBIDDEN_CHARS = '<>:"\\|?*'
+_WINDOWS_RESERVED_BASENAMES = {
+    "con", "prn", "aux", "nul",
+    *(f"com{number}" for number in range(1, 10)),
+    *(f"lpt{number}" for number in range(1, 10)),
+}
 _AUTHORED_POINTERS = {
     "belief": ("beliefs", {"content"}),
     "fact": ("facts", {"content"}),
@@ -77,10 +83,17 @@ def _source(value, label, collection, fields):
     _nonempty_string(path, f"{label}.path")
     parts = path.split("/")
     _require(
-        "\\" not in path
-        and ":" not in path
+        not any(char in _WINDOWS_FORBIDDEN_CHARS for char in path)
         and not any(ord(char) < 32 or ord(char) == 127 for char in path)
         and all(part not in ("", ".", "..") for part in parts),
+        f"{label}.path must be a portable relative path",
+    )
+    _require(
+        not any(part.endswith((".", " ")) for part in parts)
+        and not any(
+            part.split(".", 1)[0].casefold() in _WINDOWS_RESERVED_BASENAMES
+            for part in parts
+        ),
         f"{label}.path must be a portable relative path",
     )
     _require(parts[-1].endswith(".md"), f"{label}.path must end with .md")
@@ -197,14 +210,9 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
         _exact_keys(item, {"id", "text", "source"}, label, optional_voice_fields)
         _nonempty_string(item["id"], f"{label}.id")
         _require(
-            not (
-                item["id"].startswith("a")
-                and item["id"][1:].isascii()
-                and item["id"][1:].isdecimal()
-                or item["id"].startswith("d")
-                and item["id"][1:].isascii()
-                and item["id"][1:].isdecimal()
-            ),
+            not (len(item["id"]) > 1
+                 and item["id"][0] in ("a", "d")
+                 and item["id"][1:].isdigit()),
             f"{label}.id must not reuse authored or derived namespaces",
         )
         _nonempty_string(item["text"], f"{label}.text")
@@ -251,6 +259,14 @@ def validate_packet(packet: dict, expected_revision: str | None = None) -> None:
     _require(not duplicates, f"packet item IDs must be unique: {duplicates}")
     duplicate_sources = [source for source, count in Counter(sources).items() if count > 1]
     _require(not duplicate_sources, f"packet sources must be unique: {duplicate_sources}")
+    casefolded_paths = {}
+    for path, _ in sources:
+        previous = casefolded_paths.get(path.casefold())
+        _require(
+            previous is None or previous == path,
+            f"packet source paths collide case-insensitively: {previous!r}, {path!r}",
+        )
+        casefolded_paths[path.casefold()] = path
     for item in voices:
         _require(
             not (set(item.get("conflicts_with", [])) & voice_ids),
