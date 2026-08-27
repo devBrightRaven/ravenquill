@@ -23,6 +23,7 @@ _KNOWN_WARNINGS = {"voice_constraints_missing", "scene_presence_unverified"}
 _WINDOWS_FORBIDDEN_CHARS = '<>:"\\|?*'
 _WINDOWS_RESERVED_BASENAMES = {
     "con", "prn", "aux", "nul",
+    "com¹", "com²", "com³", "lpt¹", "lpt²", "lpt³",
     *(f"com{number}" for number in range(1, 10)),
     *(f"lpt{number}" for number in range(1, 10)),
 }
