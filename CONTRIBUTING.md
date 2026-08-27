@@ -1,12 +1,12 @@
 # Contributing
 
-Thanks for wanting to improve writing-harness. This project has one design principle that shapes everything: **the rule base only goes up, never down (a ratchet).** Read that before you open a PR.
+Thanks for wanting to improve Ravenquill. This project has one design principle that shapes everything: **regression coverage only goes up (a coverage ratchet).** Read that before you open a PR.
 
-歡迎貢獻。請先理解這套系統唯一的設計信條：**規則庫只升不降（像棘輪，那種只能單向轉、卡住就不會倒退的齒輪）。** 每抓到一個新的壞味道，就把它固化成一道閘，下次再也漏不掉。
+歡迎貢獻。請先理解這套系統唯一的設計信條：**已知風險的測試覆蓋只升不降。** 每抓到一個新的壞味道，留下 `should flag`；每發現一次誤殺，留下 `should allow`。規則可以被反證收窄，測試證據不能消失。
 
 ---
 
-## The ratchet: where does a new rule go?
+## The coverage ratchet: where does a new rule go?
 
 抓到一個 LLM 反覆寫出的壞味道時，先問一個問題：**正則抓得到嗎？**
 
@@ -23,11 +23,11 @@ Thanks for wanting to improve writing-harness. This project has one design princ
 
 以「新增一個禁用詞」為例：
 
-1. 在 `scripts/taiwan-style-check.py` 對應的常數 list 加一行（例如 `MAINLAND_WORDS`、`URGENCY_WORDS`、`CONCLUSION_LEAD_NOISE`）。
+1. 在 `scripts/taiwan-style-check.py` 對應的常數 list 加一行（例如 `MAINLAND_WORDS`、`URGENCY_WORDS`）。
 2. 如果是新類別，仿照現有的 `check_*` function 寫一個，並在 `main()` 的 `results` dict 掛上。
 3. 在 `examples/bloated-sample.md` 補一行會命中新規則的內容，確認這個測試樣本（fixture）仍會 fail。
-4. 在 `tests/test_harness.py` 補一個 case（clean 不該命中、bad 應該命中）。
-5. 跑 `python tests/test_harness.py`，全綠才送 PR。
+4. 在 `tests/test_harness.py` 補一組配對 case：一個 `should flag`、一個外型相似但合理的 `should allow`。
+5. 跑 `python -X utf8 tests/test_harness.py`，全綠才送 PR。
 6. 同步更新 `methodology/taiwan-writing-glossary.md`，讓人讀的規則手冊與腳本一致。
 
 腳本與 glossary 必須同步，這是硬要求。腳本是執法者，glossary 是法條，兩個對不上就是 bug。
@@ -50,7 +50,7 @@ Thanks for wanting to improve writing-harness. This project has one design princ
 `scripts/rewrite-diff.py` 是設計來吃「真人 post-edit」的。流程：
 
 ```bash
-python scripts/rewrite-diff.py 你的草稿.md 真人改完的版本.md
+python -X utf8 scripts/rewrite-diff.py 你的草稿.md 真人改完的版本.md
 ```
 
 它會統計真人改了哪幾類。同一類被改 3 次以上，那條規則就該進 glossary（理想上進腳本）。這是這套系統自我增強的方式：人改一次，系統學一次，下次自己擋。
@@ -60,8 +60,8 @@ python scripts/rewrite-diff.py 你的草稿.md 真人改完的版本.md
 ## 本機開發
 
 ```bash
-python tests/test_harness.py        # 核心檢查器煙霧測試，純 stdlib，零依賴
-python tests/test_integrations.py   # 多 agent 接線（Codex hook / Hermes plugin / 共用核心）
+python -X utf8 tests/test_harness.py        # 核心檢查器煙霧測試，純 stdlib，零依賴
+python -X utf8 tests/test_integrations.py   # 多 agent 接線（Codex hook / Hermes plugin / 共用核心）
 ```
 
 不引入任何第三方套件。所有腳本必須維持純 stdlib，這樣任何環境、任何 CI 都能直接跑。
@@ -76,8 +76,8 @@ python tests/test_integrations.py   # 多 agent 接線（Codex hook / Hermes plu
 
 ## PR checklist
 
-- [ ] `python tests/test_harness.py` 全綠
-- [ ] `python tests/test_integrations.py` 全綠（若動到 `integrations/`）
+- [ ] `python -X utf8 tests/test_harness.py` 全綠
+- [ ] `python -X utf8 tests/test_integrations.py` 全綠（若動到 `integrations/`）
 - [ ] 腳本改動有對應的測試樣本（fixture）＋測試案例（test case）
 - [ ] 腳本與 glossary 同步
 - [ ] 沒有夾帶任何私有資料（真名、客戶、本機路徑）

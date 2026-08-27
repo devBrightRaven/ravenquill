@@ -6,6 +6,7 @@ Pure stdlib, no pytest. Run:
 """
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -18,9 +19,77 @@ CODEX_HARNESS = INTEGRATIONS / "codex" / "writing-harness-gate.py"
 CODEX_TIER = INTEGRATIONS / "codex" / "output-tier-gate.py"
 HERMES_PLUGIN = INTEGRATIONS / "hermes" / "writing_harness_plugin.py"
 PY = sys.executable
+REWRITE_DIFF = ROOT / "scripts" / "rewrite-diff.py"
+PACKET_CONTRACT = INTEGRATIONS / "itoguchi" / "packet_contract.py"
+PROTECTED_CHECKER = ROOT / "scripts" / "protected-material-check.py"
 
 sys.path.insert(0, str(INTEGRATIONS))
 import harness_core as core  # noqa: E402
+
+spec = importlib.util.spec_from_file_location("ravenquill_packet_contract", PACKET_CONTRACT)
+contract = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(contract)
+
+
+def itoguchi_packet():
+    return {
+        "contract": "itoguchi.scene-evidence/v1",
+        "story_revision": "sha256:" + "a" * 64,
+        "query": {
+            "holder": "陳永仁",
+            "resolved_holder": "陳永仁",
+            "as_of": 18,
+            "about": "韓琛",
+            "persona": "古惑仔",
+        },
+        "authored_evidence": [
+            {
+                "id": "a1",
+                "kind": "belief",
+                "value": "開始懷疑我的人",
+                "availability": "character",
+                "source": {
+                    "path": "chen_wing_yan.md",
+                    "pointer": "/beliefs/1/content",
+                },
+            },
+            {
+                "id": "a2",
+                "kind": "belief",
+                "value": "陳永仁是警方臥底",
+                "availability": "writer-only",
+                "source": {
+                    "path": "hon_sam.md",
+                    "pointer": "/beliefs/0/content",
+                },
+            },
+        ],
+        "derived_context": [
+            {
+                "id": "d1",
+                "kind": "tension",
+                "summary": "正在維持謊言",
+                "availability": "writer-only",
+                "basis": ["a1"],
+            }
+        ],
+        "voice_constraints": [
+            {
+                "id": "v1",
+                "text": "對韓琛說話時避免完整交代動機",
+                "persona": "古惑仔",
+                "toward": "韓琛",
+                "since": 1,
+                "until": None,
+                "conflicts_with": [],
+                "source": {
+                    "path": "chen_wing_yan.md",
+                    "pointer": "/voice_constraints/0/text",
+                },
+            }
+        ],
+        "warnings": [],
+    }
 
 
 def md_under(dirname, text="這是一段需要過三站的中文長文，先放著。\n"):
@@ -121,6 +190,31 @@ class CodexAdapter(unittest.TestCase):
         out = json.loads(r.stdout)
         self.assertIn("L3", out["systemMessage"])
 
+    def test_direct_user_facing_clis_are_safe_under_cp932(self):
+        env = {**os.environ, "PYTHONIOENCODING": "cp932"}
+        harness_file = md_under("content")
+        client_file = md_under("clients")
+        payloads = (
+            (CODEX_HARNESS, {"hook_event_name": "PostToolUse", "tool_input": {"file_path": str(harness_file)}}),
+            (CODEX_TIER, {"hook_event_name": "PostToolUse", "tool_input": {"file_path": str(client_file)}}),
+        )
+        for script, payload in payloads:
+            with self.subTest(script=script.name):
+                result = subprocess.run(
+                    [PY, str(script)], input=json.dumps(payload).encode(),
+                    capture_output=True, env=env,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr.decode("ascii", errors="ignore"))
+                self.assertNotIn(b"UnicodeEncodeError", result.stderr)
+
+        draft = md_under("draft", "**小結：** 舊稿。\n")
+        final = md_under("final", "新版。\n")
+        result = subprocess.run(
+            [PY, str(REWRITE_DIFF), str(draft), str(final)], capture_output=True, env=env,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode("ascii", errors="ignore"))
+        self.assertNotIn(b"UnicodeEncodeError", result.stderr)
+
 
 class HermesPlugin(unittest.TestCase):
     def setUp(self):
@@ -155,6 +249,403 @@ class HermesPlugin(unittest.TestCase):
         self.assertIn("writing-harness", injected["context"])
         # queue drained — next turn injects nothing
         self.assertIsNone(self.plugin._inject_pending())
+
+
+class ItoguchiPacketContract(unittest.TestCase):
+    def test_itoguchi_packet_accepts_v1_and_rejects_unsafe_items(self):
+        contract.validate_packet(itoguchi_packet())
+        for mutation in (
+            lambda p: p.update(contract="itoguchi.scene-evidence/v2"),
+            lambda p: p.pop("story_revision"),
+            lambda p: p.update(story_revision="sha256:not-a-revision"),
+            lambda p: p["authored_evidence"][0].pop("source"),
+            lambda p: p["authored_evidence"][0]["source"].update(
+                path="C:/stories/chen_wing_yan.md"
+            ),
+            lambda p: p["authored_evidence"][0]["source"].update(
+                path="../chen_wing_yan.md"
+            ),
+            lambda p: p["authored_evidence"][0]["source"].pop("pointer"),
+            lambda p: p["authored_evidence"][0].update(availability="reader"),
+            lambda p: p["derived_context"][0].update(id="a1"),
+            lambda p: p["derived_context"][0].update(basis=[]),
+            lambda p: p["derived_context"][0].update(basis=["missing"]),
+            lambda p: p["voice_constraints"][0].update(conflicts_with="v2"),
+            lambda p: p.update(warnings="voice_constraints_missing"),
+            lambda p: p.update(unexpected=True),
+        ):
+            with self.subTest(mutation=mutation):
+                bad = itoguchi_packet()
+                mutation(bad)
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(bad)
+
+    def test_packet_rejects_wrong_structure_types(self):
+        for mutation in (
+            lambda p: p.update(query=[]),
+            lambda p: p["query"].update(as_of=True),
+            lambda p: p.update(authored_evidence={}),
+            lambda p: p["authored_evidence"][0].update(value=""),
+            lambda p: p["derived_context"][0].update(availability="character"),
+            lambda p: p["voice_constraints"][0].update(text=""),
+            lambda p: p["voice_constraints"][0].update(since="1"),
+            lambda p: p.update(warnings=[1]),
+        ):
+            with self.subTest(mutation=mutation):
+                bad = itoguchi_packet()
+                mutation(bad)
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(bad)
+
+    def test_packet_rejects_unsafe_or_underspecified_source_pointers(self):
+        for pointer in (
+            "/../../etc/passwd",
+            "/beliefs//content",
+            "/beliefs/content",
+            "/beliefs/0/content/extra",
+            "/beliefs/not-an-index/content",
+            "/beliefs/00/content",
+            "/beliefs/０/content",
+        ):
+            with self.subTest(pointer=pointer):
+                packet = itoguchi_packet()
+                packet["authored_evidence"][0]["source"]["pointer"] = pointer
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
+
+    def test_packet_accepts_only_producer_authored_pointer_mappings(self):
+        valid = (
+            ("belief", "/beliefs/0/content"),
+            ("fact", "/facts/0/content"),
+            ("emotion", "/emotional_state/0/state"),
+            ("agenda", "/agenda/0/goal"),
+            ("relation", "/relations/0/surface"),
+            ("relation", "/relations/0/hidden_tension"),
+            ("relation", "/relations/0/secret_asymmetry"),
+            ("nested_belief", "/nested_beliefs/0/believes_content"),
+            ("deception", "/deceptions/0/lie"),
+            ("persona", "/personas/0/id"),
+        )
+        for kind, pointer in valid:
+            with self.subTest(kind=kind, pointer=pointer):
+                packet = itoguchi_packet()
+                packet["authored_evidence"][0]["kind"] = kind
+                packet["authored_evidence"][0]["source"]["pointer"] = pointer
+                contract.validate_packet(packet)
+
+        for kind, pointer in (
+            ("belief", "/beliefs/0/state"),
+            ("fact", "/beliefs/0/content"),
+            ("relation", "/relations/0/content"),
+            ("unknown", "/beliefs/0/content"),
+        ):
+            with self.subTest(kind=kind, pointer=pointer):
+                packet = itoguchi_packet()
+                packet["authored_evidence"][0]["kind"] = kind
+                packet["authored_evidence"][0]["source"]["pointer"] = pointer
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
+
+    def test_packet_accepts_only_producer_voice_and_derived_kinds(self):
+        for pointer in (
+            "/beliefs/0/content",
+            "/voice_constraints/0/id",
+            "/voice_constraints/00/text",
+            "/voice_constraints/０/text",
+        ):
+            with self.subTest(pointer=pointer):
+                packet = itoguchi_packet()
+                packet["voice_constraints"][0]["source"]["pointer"] = pointer
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
+
+        packet = itoguchi_packet()
+        packet["derived_context"][0]["kind"] = "summary"
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+    def test_packet_accepts_only_portable_producer_source_paths(self):
+        for path in (
+            "cast/chen wing yan.md",
+            "conifer.md",
+            "com0.md",
+            "COM10.md",
+            "lpt10.md",
+            "auxiliary/card.md",
+        ):
+            with self.subTest(path=path):
+                packet = itoguchi_packet()
+                packet["authored_evidence"][0]["source"]["path"] = path
+                contract.validate_packet(packet)
+
+        for path in (
+            "",
+            "/chen_wing_yan.md",
+            "C:/chen_wing_yan.md",
+            "cast\\chen_wing_yan.md",
+            "cast:chen_wing_yan.md",
+            "card<draft>.md",
+            "card>draft.md",
+            "card\"draft.md",
+            "card|draft.md",
+            "card?draft.md",
+            "card*draft.md",
+            "cast//chen_wing_yan.md",
+            "./chen_wing_yan.md",
+            "cast/../chen_wing_yan.md",
+            "cast./chen_wing_yan.md",
+            "cast /chen_wing_yan.md",
+            "CON.md",
+            "prn.story.md",
+            "cast/AuX.md",
+            "nul/chen_wing_yan.md",
+            "COM1.md",
+            "lpt9.backup.md",
+            "COM¹.md",
+            "com².story.md",
+            "CoM³.backup.md",
+            "LPT¹.md",
+            "lpt².story.md",
+            "LpT³.backup.md",
+            "chen_wing_yan.MD",
+            "chen_wing_yan.md.txt",
+            "chen\x00wing\x1fyan.md",
+            "chen\x7fwing_yan.md",
+        ):
+            with self.subTest(path=repr(path)):
+                packet = itoguchi_packet()
+                packet["authored_evidence"][0]["source"]["path"] = path
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
+
+    def test_packet_rejects_casefold_colliding_source_paths(self):
+        packet = itoguchi_packet()
+        packet["authored_evidence"][1]["source"]["path"] = "CHEN_WING_YAN.md"
+
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+    def test_packet_rejects_duplicate_source_authority_entries(self):
+        packet = itoguchi_packet()
+        packet["authored_evidence"][1]["source"] = dict(
+            packet["authored_evidence"][0]["source"]
+        )
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+        packet = itoguchi_packet()
+        duplicate = dict(packet["voice_constraints"][0])
+        duplicate["id"] = "v2"
+        duplicate["conflicts_with"] = []
+        packet["voice_constraints"].append(duplicate)
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+    def test_packet_wraps_unhashable_contract_values(self):
+        for mutation in (
+            lambda p: p["authored_evidence"][0].update(availability=[]),
+            lambda p: p["authored_evidence"][0].update(kind=[]),
+            lambda p: p.update(warnings=[[]]),
+        ):
+            with self.subTest(mutation=mutation):
+                packet = itoguchi_packet()
+                mutation(packet)
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
+
+    def test_packet_rejects_noncanonical_item_ids_and_unknown_warnings(self):
+        for mutation in (
+            lambda p: p["authored_evidence"][0].update(id="x1"),
+            lambda p: p["authored_evidence"][0].update(id="a0"),
+            lambda p: p["authored_evidence"][1].update(id="a3"),
+            lambda p: p["derived_context"][0].update(id="dx"),
+            lambda p: p["derived_context"][0].update(id="d0"),
+            lambda p: p["voice_constraints"][0].update(id="a9"),
+            lambda p: p["voice_constraints"][0].update(id="d2"),
+            lambda p: p.update(warnings=["unknown_warning"]),
+            lambda p: p.update(warnings=["scene_presence_unverified", "scene_presence_unverified"]),
+        ):
+            with self.subTest(mutation=mutation):
+                bad = itoguchi_packet()
+                mutation(bad)
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(bad)
+
+        for voice_id in ("a１", "d１"):
+            with self.subTest(voice_id=voice_id):
+                packet = itoguchi_packet()
+                packet["voice_constraints"][0]["id"] = voice_id
+                with self.assertRaises(contract.PacketContractError):
+                    contract.validate_packet(packet)
+
+    def test_expected_revision_must_match(self):
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(
+                itoguchi_packet(), expected_revision="sha256:" + "b" * 64
+            )
+
+    def test_protected_selection_uses_only_present_authored_literals(self):
+        selected = contract.select_protected_items(
+            itoguchi_packet(), "原稿保留：開始懷疑我的人。開始懷疑我的人。", ["a1"]
+        )
+        self.assertEqual(selected, [{"value": "開始懷疑我的人", "count": 2}])
+        self.assertEqual(
+            contract.select_protected_items(
+                itoguchi_packet(), "原稿保留：陳永仁是警方臥底。", ["a2"]
+            ),
+            [{"value": "陳永仁是警方臥底", "count": 1}],
+        )
+        with self.assertRaises(contract.PacketContractError):
+            contract.select_protected_items(itoguchi_packet(), "原稿", ["d1"])
+        with self.assertRaises(contract.PacketContractError):
+            contract.select_protected_items(itoguchi_packet(), "原稿", ["a1"])
+
+    def test_voice_constraint_passes_through_exact_text(self):
+        text = "對韓琛說話時避免完整交代動機"
+        self.assertEqual(
+            contract.select_protected_items(itoguchi_packet(), text, ["v1"]),
+            [{"value": text, "count": 1}],
+        )
+
+    def test_protected_selection_matches_existing_checker_semantics(self):
+        packet = itoguchi_packet()
+        packet["authored_evidence"].extend(
+            [
+                {
+                    "id": "a3",
+                    "kind": "belief",
+                    "value": "開始懷疑我的人",
+                    "availability": "character",
+                    "source": {"path": "other.md", "pointer": "/beliefs/0/content"},
+                },
+                {
+                    "id": "a4",
+                    "kind": "fact",
+                    "value": "30",
+                    "availability": "character",
+                    "source": {"path": "facts.md", "pointer": "/facts/0/content"},
+                },
+                {
+                    "id": "a5",
+                    "kind": "fact",
+                    "value": "https://example.com/a",
+                    "availability": "character",
+                    "source": {"path": "facts.md", "pointer": "/facts/1/content"},
+                },
+            ]
+        )
+        cases = (
+            ("開始懷疑我的人。開始懷疑我的人。", ["a1"], [{"value": "開始懷疑我的人", "count": 2}]),
+            ("30 與 130", ["a4"], [{"value": "30", "count": 1}]),
+            (
+                "https://example.com/a2 https://example.com/a",
+                ["a5"],
+                [{"value": "https://example.com/a", "count": 1}],
+            ),
+            ("開始懷疑我的人", ["a1", "a3"], [{"value": "開始懷疑我的人", "count": 1}]),
+        )
+        for before_text, item_ids, expected in cases:
+            with self.subTest(item_ids=item_ids):
+                items = contract.select_protected_items(packet, before_text, item_ids)
+                self.assertEqual(items, expected)
+                with tempfile.TemporaryDirectory() as directory:
+                    directory = Path(directory)
+                    manifest = directory / "manifest.json"
+                    before = directory / "before.md"
+                    manifest.write_text(json.dumps({"items": items}), encoding="utf-8")
+                    before.write_text(before_text, encoding="utf-8")
+                    result = subprocess.run(
+                        [PY, str(PROTECTED_CHECKER), str(manifest), str(before), str(before)],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        with self.assertRaises(contract.PacketContractError):
+            contract.select_protected_items(packet, "130", ["a4"])
+
+    def test_character_availability_rejects_writer_only_and_derived_ids(self):
+        contract.require_character_available(itoguchi_packet(), ["a1"])
+        for item_id in ("a2", "d1", "v1"):
+            with self.subTest(item_id=item_id):
+                with self.assertRaises(contract.PacketContractError):
+                    contract.require_character_available(
+                        itoguchi_packet(), [item_id]
+                    )
+
+    def test_declared_active_voice_conflict_is_rejected(self):
+        packet = itoguchi_packet()
+        packet["voice_constraints"].append(
+            {
+                "id": "v2",
+                "text": "對韓琛說話時完整交代動機",
+                "conflicts_with": [],
+                "source": {
+                    "path": "chen_wing_yan.md",
+                    "pointer": "/voice_constraints/1/text",
+                },
+            }
+        )
+        packet["voice_constraints"][0]["conflicts_with"] = ["v2"]
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+    def test_voice_constraints_must_be_active_for_packet_query(self):
+        for field, value in (
+            ("persona", "警察"),
+            ("toward", "劉建明"),
+            ("since", 19),
+            ("until", 18),
+        ):
+            for writing_new_dialogue in (False, True):
+                with self.subTest(field=field, writing_new_dialogue=writing_new_dialogue):
+                    packet = itoguchi_packet()
+                    packet["voice_constraints"][0][field] = value
+                    with self.assertRaises(contract.PacketContractError):
+                        contract.voice_status(
+                            packet, writing_new_dialogue=writing_new_dialogue
+                        )
+
+    def test_voice_constraints_missing_warning_cannot_contradict_rules(self):
+        packet = itoguchi_packet()
+        packet["warnings"] = ["voice_constraints_missing"]
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+        packet = itoguchi_packet()
+        packet["voice_constraints"] = []
+        with self.assertRaises(contract.PacketContractError):
+            contract.validate_packet(packet)
+
+    def test_unverified_scene_presence_blocks_only_new_dialogue_certification(self):
+        packet = itoguchi_packet()
+        packet["warnings"] = ["scene_presence_unverified"]
+        self.assertEqual(
+            contract.select_protected_items(packet, "開始懷疑我的人", ["a1"]),
+            [{"value": "開始懷疑我的人", "count": 1}],
+        )
+        with self.assertRaises(contract.PacketContractError):
+            contract.voice_status(packet, writing_new_dialogue=True)
+        self.assertEqual(
+            contract.voice_status(packet, writing_new_dialogue=False),
+            "voice fidelity: unverified",
+        )
+
+    def test_voice_status_requires_constraints_for_new_dialogue(self):
+        self.assertEqual(
+            contract.voice_status(itoguchi_packet(), writing_new_dialogue=True),
+            "voice fidelity: verified against supplied constraints",
+        )
+        packet = itoguchi_packet()
+        packet["voice_constraints"] = []
+        packet["warnings"] = ["voice_constraints_missing"]
+        with self.assertRaises(contract.PacketContractError):
+            contract.voice_status(packet, writing_new_dialogue=True)
+        self.assertEqual(
+            contract.voice_status(packet, writing_new_dialogue=False),
+            "voice fidelity: unverified",
+        )
 
 
 if __name__ == "__main__":

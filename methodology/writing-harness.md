@@ -1,23 +1,35 @@
 # 寫作 Harness（中文對外／知識資產長文）
 
-> 這份檔是四站方法的權威定義，照它走就對。所有面向人眼閱讀的中文長文（科普／社群貼文／案例／報告書敘述段／提案故事段／客戶訊息／教學攻略）**必須**穿過下面四站，未過四站不得宣告完成。
-> **社群圖卡／輪播／貼文文案亦屬對外中文內容，一樣過四站**——文案嵌在 HTML／JSON 裡不豁免，先抽成 .md 過站再嵌回。對外 CTA／slogan／品牌語句**不自創**：先查既有模式（過往圖卡／簡報尾頁），查無就問需求方，禁止代編。掛作者第一人稱名義的觀點／心得段同理：內容由作者親供，AI 只能代擬候選請作者挑改，不得逕上成品。
+> 這份檔是三道核心關卡的權威定義：S0 輸入、S1 機械、S2 人類判斷。所有面向人眼閱讀的中文長文都必須通過這三道關卡。
+> 社群圖卡／輪播／貼文文案亦屬對外中文內容。文案嵌在 HTML／JSON 裡不豁免，先抽成 .md 檢查再嵌回。對外 CTA／slogan／品牌語句和掛名觀點不自創：先用已有素材，查無就問需求方。
 > 不適用：表格、yaml、程式碼、清單頭尾、純機械骨架（標 `draft-skeleton`）。
 
 先講清楚兩個詞。**AI slop** 指 AI 寫出來那種空泛、堆砌、套模板，一看就知道不是人寫的味道。**閘**(gate) 指一個沒通過就不放行的檢查點。
 
-這套系統的設計，是把「會不會寫成 AI slop」這件事，從事後憑感覺修，前移成動筆前、草稿後兩個固定檢查點。最便宜的返工時機是「還沒寫」和「剛寫第一段」，四站就卡在那兩個點上：
+這套系統把「會不會寫成 AI slop」從事後憑感覺修，前移成動筆前和草稿後的固定檢查點：
 
 - **S0 輸入閘**：動筆前擋掉「沒素材就硬編」。
 - **S1 機械閘**：草稿後用腳本掃機械錯誤（標點、用字、句型）。
-- **S1.5 帶風向審查員**：草稿後派獨立審查員抓「替讀者下判斷」。
+- **條件式 perspective review**：高風險對外說服或作者不易自審時，可加做「替讀者下判斷」的獨立視角審查；不是每篇必跑的第四道關卡。
 - **S2 判斷閘**：草稿後靠人判斷腳本抓不到的問題（結構、聲音、有沒有編造）。
 
 ---
 
 ## S0 輸入閘（動筆前，最高槓桿）
 
-寫之前先問：這篇要不要**真實場景／案例／引述對白／數字**？
+寫之前先記錄：
+
+- `scene`：`fiction`／`social`／`newsletter`／`sales`／`customer-service`／`office-report`／`general`
+- `edit_authority`：`review-only`／`propose`／`apply`
+- `surface_scope`：本次允許檢視或修改的檔案、段落、欄位或輸出面
+- `source_evidence`：fiction pass 使用的 authored story evidence／`none`（可選）
+- `protected_material`：`<manifest.json>`／`none`
+
+`review-only` 禁止寫入；`propose` 只能提供候選修改；`apply` 只能在 `surface_scope` 內寫入。人類保留最終採用、拒絕與發布決定。
+
+若 `scene: fiction`，S0 確認 `source_evidence` 涵蓋本次故事證據；它界定 authored facts、角色知識與 canon，不要求 nonfiction 真實案例或可外部驗證的公開主張，packet-external 內容維持 unresolved。`new character dialogue` for a named character 必須有 supplied authored voice constraints，否則 `BLOCK`；既有對白可 review 或 edit，但缺少 constraints 時 S2 固定寫 `voice fidelity: unverified`。
+
+對非 fiction 的 scene，接著問：這篇要不要**真實場景／案例／引述對白／數字**？
 
 - 要 → 有沒有可用的真實（可匿名）素材？
   - 有 → 進 S1 區的撰寫
@@ -33,7 +45,7 @@
 ## S1 機械閘（草稿後，純腳本 0 LLM）
 
 ```
-python ~/.claude/skills/writing-harness/scripts/taiwan-style-check.py <file.md> [--public]
+python -X utf8 scripts/taiwan-style-check.py <file.md> [--public]
 ```
 
 exit 0 才算過（exit 0 是程式回報「全部通過」的慣例，非 0 代表有命中）。它掃這幾類：
@@ -41,31 +53,23 @@ exit 0 才算過（exit 0 是程式回報「全部通過」的慣例，非 0 代
 - 破折號、半形標點夾在中文裡
 - 大陸用語、把 API 術語直接丟給讀者
 - 開場推銷詞、「不是 X 是 Y」這種對比句型在同一篇用超過 2 次
-- **雜訊框架詞**：講到一半冒出來、卻沒帶任何資訊的填充語。例如「理由很 X」「問題出在」「真正難／值錢的是」「這正是重點」「值得注意的是」「又 X 又 Y」，以及句首的「其實／老實說／我記得／說真的」
+- **AI 工具殘留**：追蹤參數與內部 citation 殘碼；引用原話、inline code 與 code fence 內容放行
 
-**對外長文多三道**：寫給讀者看的長文（科普／客戶訊息／提案）跑檢查時加 `--public`，會多擋三類：
-
-1. **對外工程黑話**——像「機械可檢」「固化」這種工程圈用語，對一般讀者是術語牆（完整清單見 glossary §3.3）。對內筆記用這些詞沒問題，所以平常不擋、只有 `--public` 才紅燈。
-2. **書面成語／連接詞**——「大同小異」「不外乎」這類成語是書面腔，對外要口語（glossary §3.4）。
-3. **slop 抽象名詞「X 感」**——「信任感」「儀式感」這類空泛名詞黑名單，命中就還原成具體場景與動作（glossary §3.4）。
+**對外文字**：寫給一般讀者的內容加 `--public`，多擋低誤報的工程黑話，例如「機械可檢」、`false positive`、`verbatim`。具有普通用法的「固化」、成語和「X 感」留給 S2 按語境判斷，不做無條件黑名單。
 
 另外，frontmatter 標 `audience: external` + `type: client-message` 的對外短訊，會再多一道全形分號檢查：訊息用句號斷句更像真人，分號是書面腔（glossary §1.1.1）。
 
-**大陸用語的三個工程例外**：`質量`（物理 mass）、`閉環`（工程 closed-loop 控制）、`顆粒度`（技術 granularity）在正確的工程／物理語境被擋下時，人工確認語境無誤即可放行，並在留證裡註明「工程例外：詞（語境）」。其餘大陸用語一律改台灣用語，不得援例。
-
 命中即修，修完重跑，不得跳過。Edit 後重讀該行驗證。
 
-> 機械閘只抓正則表達式抓得到的固定規則，而且刻意只收「幾乎不會誤判」的那一批，模糊的留給 S1.5 與 S2 判斷。腳本裡每條規則對應一個檢查函式；之後想加任何能用正則描述的規則，就往腳本補一個函式。腳本另支援自蒸餾棘輪：後面幾站反覆抓到的同型雜訊詞，累積信度並通過誤報測試後可晉升進 `noise-learned.json`，機械層覆蓋率隨使用上升。
+> 機械閘只收低誤報規則。每條新 regex 必須同時有 `should flag` 和 `should allow` 行為測試；無法寫出有意義反例邊界時，留給 S2 判斷。
 
 ---
 
-## S1.5 帶風向審查員（草稿後，獨立 sub-agent）
+## 條件式 perspective review（選用）
 
-對外／知識資產長文必跑。派一個獨立的 sub-agent（審查提示詞＝`methodology/帶風向審查員.md`），只審一件事：**替讀者下判斷／帶風向**，分詞／句／結構三層，預設有罪（假設文中有帶風向，去找出來；找不到才放行）。骨架／表格／程式碼／條列概念卡豁免。
+高風險對外說服、政策／法遵主張，或作者不易自審時，可用 `methodology/帶風向審查員.md` 做獨立 perspective review。審查可由人、現有 council 或另一個 agent 執行，Ravenquill 不強制特定編排系統。
 
-為何要獨立：判斷層的把關不能靠作者自審——作者會自我合理化滑過去，這是實際踩過的坑。審查員回傳 findings（逐條問題）＋ verdict（放不放行）＋ 自蒸餾 candidates（從這次抓到的問題蒸餾出的新規則候選）；findings 逐條處理，candidates 由維護者批准入庫（詞 → S1 regex／結構 → 審查員 checklist），規則庫隨使用演化。
-
-verdict 非 clean 或 findings 未處理＝未過，不得宣告完成。
+選擇執行時，審查結果要列出問題、理由與修正方向。不要預設有罪；沒有證據就回報 clean。
 
 ---
 
@@ -73,29 +77,64 @@ verdict 非 clean 或 findings 未處理＝未過，不得宣告完成。
 
 腳本抓不到的問題（文章結構、作者聲音、敘事姿態、台灣語感、有沒有編造）只能靠人判斷。**逐項自答，並把結果貼進回覆**，才能宣告完成。把答案貼出來就是「留證」：留下一份事後能回頭檢查的證據，而不是一句「我檢查過了」就算數。
 
+若 `scene: fiction`，S2 報告 `knowledge fidelity`（知識↔`source_evidence`）、`canon fidelity`（人物、關係、事件↔authored evidence）與 `voice fidelity`（constraints 比對結果）。既有對白缺少 constraints 時固定為 `voice fidelity: unverified`；缺少 constraints 的新 `new character dialogue` for a named character 已在 S0 `BLOCK`。
+
 > 這裡的「敘事姿態」指作者在文章裡站的位置：是把場景擺出來讓讀者自己下判斷，還是急著用形容詞替讀者定性。前者像人寫的，後者是 AI 的慣性。下面 2b 會展開怎麼自查。
 
-### 2a 結構／聲音 5 問
+### 2a 結構／聲音 5 問（非 fiction）
 1. 開場有具體場景／時間／人，還是全景泛論？
 2. 有一個「我自己的」、會被反駁的主張當主軸？
 3. 段落詳略刻意不平均（重點停留、其餘掃過），還是 N 段等長罐頭？
 4. 收尾是具體斷言，還是空心金句（刪掉看內容掉不掉血）？
 5. 全篇有至少一個只有當事人講得出的真實（可匿名）例子／數字？
 
-任一答不出 → 還是 AI 文，**重寫骨架不是潤稿**。
+非 fiction 任一答不出 → 還是 AI 文，**重寫骨架不是潤稿**。
+
+`fiction` 改查：場景與視角是否清楚、結構是否收束，以及內容是否符合 `source_evidence` 與 supplied voice constraints；不要求可反駁個人主張或真實例子／數字。
 
 ### 2b 敘事姿態
 - 評價詞前置自查：每個「很／最／真正／幾乎／太＋評價詞」「理由很 X」「問題出在 Y」，問「刪掉它，讀者靠前文推得出來嗎？」推得出 → 刪（讀者自己得出＝敘事成功）；推不出 → 補場景不是補形容詞。
-- 雜訊框架詞清零：句首「其實／老實說／坦白講／說真的／我記得」這類宣告真實感的填充，零承載，刪。角色講話直接「X 說」。
+- 句首語氣詞由人工依語境判斷：「其實／老實說／我記得」可能是填充，也可能承載態度或不確定性；不可只憑詞面硬刪。
 - 定調位置（結構面）：不可在文章前段用強形容詞／評價宣稱替後文預設角度。前段一定調，讀者就帶著那個定見讀後面的理由與證據——這是帶風向，會把讀者推進刻板印象、讀者也察覺得到而反感，論點不增反減。先擺事實與論述，判斷讓讀者讀完自己形成；命名／定性只能在事情發生後，不可在它之前（收尾句亦然）。
 
 ### 2c 台灣在地語感
 - 有對白或口語的地方，唸出來，辨認得出是台灣人在講話才留。以中小企業老闆的口吻為例：問他真的會問的問題（「到底可以幫我們在哪邊加分」）、把成本焦慮講得口語（「有沒有更省錢的作法」）、省掉主詞的口語強調（「不然請大會計師事務所超級貴」）。四平八穩的書面普通話就是 AI 預設腔，要重寫。
 
-### 2d 句子層 9 類人眼語病（默讀掃）
+### 2d 場景邊界
+
+- `fiction`：依 `source_evidence` 檢查場景、角色知識與 canon；fidelity 結果留在 2g，不套用非 fiction 的真實素材要求。
+- `social`：保留口頭禪、碎句與刻意斷行；輸出到純文字平台時清除 Markdown 標記。
+- `newsletter`：保留故事節奏、岔題與留白；不強迫補公式化結尾。
+- `sales`：去掉浮誇形容詞，但不得削弱 CTA、價格、期限、名額或退費承諾。
+- `customer-service`：先回答再說明；金流、條款與責任措辭保持精確。
+- `office-report`：結論先行並維持正式語域；不為了「人味」加入口語碎片。
+- `general`：只執行跨場景都安全的判斷；不確定時標示場景缺口。
+
+### 2e 句子層 9 類人眼語病（默讀掃）
 斷句不清／修飾鏈繞口／缺動詞／缺受詞／語序怪／指代不清／詞性誤認／口語縮寫不當／擬人化過度。
 
-### 2e 後置保真回讀（保真層）
+### 2f 保護內容與作者聲音
+
+如果本次確實沒有需要逐字保護的內容，明記 `protected_material: none`，跳過 protected checker。不要為了跑流程虛構 literal，也不要建立空 manifest。
+
+若有需要保護的內容，修改前先保留原稿，並用非空 JSON manifest 明列 exact literal 和出現次數。只要原稿含 URL，且需求要求保留事實或來源素材，預設 protected literal 就是完整 supplied URL，不是拆開後挑其中幾個元件保留。然後執行：
+
+```
+python -X utf8 scripts/protected-material-check.py <manifest.json> <before.md> <after.md>
+```
+
+```json
+{
+  "items": [
+    {"value": "8/30", "count": 1},
+    {"value": "「原話」", "count": 1},
+    {"value": "https://example.com/?x=1&utm_source=ChatGPT.com", "count": 1}
+  ]
+}
+```
+
+完整 protected URL 的結果只能是三種之一：整條 URL 原樣保留；manifest 明示授權後，只移除 raw query 中完全相同的小寫 segment `utm_source=chatgpt.com`、`utm_source=openai` 或 `referrer=grok.com`；使用者明確授權更改或移除那一條完整 URL。一般性的「移除 AI 痕跡」不會自動選中後兩種結果。`utm_source=ChatGPT.com`、encoded variants 等未符合 exact lowercase cleanup 的項目保持原樣，並列為 unresolved URL decision 交人類決定。未列入 manifest 的新增主張、supplied voice constraints 與高誤報語意詞仍需人工依上下文核對。
+
 改完後對照你的**人味保護清單**過一遍：那是一份作者自建的清單，收錄自己行文的人味特徵（慣用口頭語、標誌性句式、特定領域的講法）。目的是確認去 AI 味的過程沒有把作者本人的味道一起誤刪——判準是聚集不是單點：一兩處被改掉無妨，同一類特徵被系統性抹平才算失真。
 
 ---
@@ -103,18 +142,25 @@ verdict 非 clean 或 findings 未處理＝未過，不得宣告完成。
 ## 留證格式（宣告完成時貼這個）
 
 ```
-S0 輸入閘：真實素材=有／無（無 → 已 STOP 要素材，未產出）
-S1 機械閘：taiwan-style-check exit 0 ✅（或列已修項；大陸用語工程例外放行：詞+語境，或無）
-S1.5 帶風向審查員：verdict=clean ✅（或列 findings＋處理）；candidates 待批 N 條（或無）
+S0 輸入閘：scene=<scene>；edit_authority=<review-only|propose|apply>；surface_scope=<scope>；source_evidence=<authored story evidence|none>；真實素材=有／無（非 fiction）
+Authority 驗證：未超出 surface_scope；review-only 無寫入；人類保留最終決定
+S1 機械閘：taiwan-style-check exit 0 ✅（或列已修項）
+Perspective review：未觸發／已執行（列 findings 與處理）
 S2 判斷閘：
-  2a 5 問：①… ②… ③… ④… ⑤…（逐題一句話佐證）
+  2a 非 fiction 5 問：①… ②… ③… ④… ⑤…；fiction 改報場景／視角／收束／evidence／voice 檢查結果
   2b 評價詞／雜訊詞：已掃，列刪改處或「無」
   2c 台灣語感：對白唸過／無對白
-  2d 9 類語病：默讀過，列修處或「無」
-  S2-保真：已對照人味保護清單，無誤刪人味特徵（或列還原處）
+  2d 場景邊界：已依 <scene> 檢查
+  2e 9 類語病：默讀過，列修處或「無」
+  2f 保護內容：protected_material=<manifest.json|none>
+    checker=<executed|not executed>
+    artifacts=<實際 manifest/before/after 路徑|none>
+    result=<實際 exit code|manual exact-literal comparison>
+    unresolved URL decisions=<保持原樣、待人類決定的 variants|none>
+  2g fiction：knowledge fidelity=…；canon fidelity=…；voice fidelity=…；既有對白缺 constraints 時逐字寫 `voice fidelity: unverified`
 ```
 
-四站任一未過或留證缺項＝未完成，不得回報 done。
+Exit code 只能來自實際以這三份 artifacts 執行過的 command。純聊天或模擬改寫要寫 `checker=not executed`，改報 manual exact-literal comparison。三道核心關卡任一未過或留證缺項＝未完成。條件式 review 若觸發，其 findings 也必須處理。
 
 ---
 
@@ -123,6 +169,5 @@ S2 判斷閘：
 把規則塞進 prompt 有兩個失效模式：模型會選擇性遵守（純文字描述的規則最容易被跳過），而且事後沒有任何證據能證明它真的做了。Harness 的差別是：
 
 1. **機械閘是程式，不是承諾**：exit code 不會說謊。
-2. **判斷層把關獨立於作者**：S1.5 派一個乾淨上下文的審查員，作者自我合理化的盲區換一雙眼睛就看得見。
-3. **判斷閘要留證**：逐題自答貼回覆，等於強制做一次自我聲明（self-attestation），比一句「我檢查過了」更能事後查核。
-4. **可加閘、只升不降**：每次被打回的新錯誤，先問「正則抓得到嗎」——抓得到就往 S1 腳本加一條；屬於「替讀者下判斷」這一族的，蒸餾進 S1.5 審查員的判準庫；都不是，才寫成 S2 的判斷項。規則庫單向長大，品質地板只升不降。
+2. **判斷閘要留證**：逐題自答貼回覆，比一句「我檢查過了」更能事後查核。
+3. **coverage ratchet**：新規則留 SF，誤殺留 SNF。已知風險的測試覆蓋只升不降，regex 可以因反證收窄或撤換。

@@ -1,12 +1,13 @@
 ---
 name: tighten
 description: >
-  偵測並重寫 Markdown 的冗贅用詞。純 regex 先掃 10 條 bloat pattern，再用
-  sonnet sub-agent 重寫 flagged 段落。觸發：「幫我精簡」「砍冗贅」「tighten」
-  「檢查用詞」「token 節省」，或呼叫 /tighten [paths]。
+  Use when an existing Claude-specific setup invokes the legacy tighten workflow
+  for Markdown bloat review or rewriting.
 ---
 
 # Tighten
+
+> **Optional legacy subskill.** 這份文件保留既有 Claude-specific 路徑、model 與 Edit/Write 操作語意，不屬於 agent-agnostic Ravenquill core，也不會由 root installer 安裝。新整合請直接使用 root `SKILL.md` 與 `scripts/verbosity-check.py`；只有需要相容舊工作流時才自行安裝本 subskill。
 
 Markdown 精簡管線，目的是省 token。分工是這樣：偵測交給腳本（不花 LLM），只有重寫才動用 LLM，避免把便宜的偵測工作浪費在昂貴的模型上。
 

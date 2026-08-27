@@ -8,15 +8,14 @@ Scans style hard rules, outputs Markdown report to stdout.
 Usage:
     python taiwan-style-check.py <file.md> [--public]
 
-Rule sync: rules here mirror methodology/taiwan-writing-glossary.md §6 and the
-"conclusion-lead / noise-frame" section of methodology/writing-harness.md S1.
+Rule sync: rules here mirror methodology/taiwan-writing-glossary.md §6.
 When the glossary/harness gains a regex-able rule, add the matching check
 function here. Verb audit (glossary §2.2) is context-dependent and intentionally
 left to LLM self-comparison against the glossary table, not regex.
 """
 from __future__ import annotations
 
-import json
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -51,7 +50,6 @@ URGENCY_WORDS = [
     "該停下來看",
     "值得重視",
     "不可不知",
-    "不得不",
     "你必須",
     "建議先收藏",
     "再不學就來不及",
@@ -71,7 +69,6 @@ MAINLAND_WORDS = [
     "批量",
     "軟件",
     "信息",
-    "質量",  # ⚠️ 物理 mass 語境誤報，glossary §2.1 標例外（人工放行）
     "默認",
     "鏈接",
     "範式轉換",
@@ -80,17 +77,14 @@ MAINLAND_WORDS = [
     "硬盤",
     "硬件",
     "服務器",
-    "登錄",
     "操作系統",
     "數碼",
     "攝像頭",
     # 商業黑話 (glossary §2.1.2，只擋重黑話)
     "賦能",
-    "閉環",  # ⚠️ 工程 closed-loop 例外
     "復盤",
     "對標",
     "抓手",
-    "顆粒度",  # ⚠️ 工程 granularity 例外
 ]
 
 # API 術語禁令 (glossary §3.1)
@@ -107,89 +101,21 @@ API_TERMS = [
 # 留 glossary §3.3 表靠 LLM 自審，不進 regex（避免誤殺工程客戶語境）。(pattern, 建議替換)
 PUBLIC_JARGON = [
     (r"機械可檢", "規則明確 / 電腦抓得到"),
-    (r"固化", "內建 / 定成規矩"),  # ⚠️ 材料固化語境誤報，人工放行
     (r"false\s+positives?", "誤報"),
     (r"\bverbatim\b", "原話完整收錄"),
-]
-
-# 書面成語／連接詞（僅 --public，glossary §3.4）：對外要口語，成語＝書面腔。(pattern, 建議替換)
-# 成語化是書面 vs 口語第一層 slop。
-WRITTEN_IDIOM = [
-    (r"大同小異", "口語：差不多 / 都那幾樣"),
-    (r"不外乎", "口語：不就是 / 大概就是"),
-]
-
-# slop 抽象名詞「X感」（僅 --public，glossary §3.4）：空泛名詞＝AI slop（抽象 vs 具體第二層）。
-# 明列黑名單而非 `.感` 萬用正則 → 天生不誤殺語感／質感／口感／手感等合法詞。還原成具體場景/動作。
-SLOP_ABSTRACT_NOUNS = [
-    "信任感",
-    "安全感",
-    "存在感",
-    "儀式感",
-    "參與感",
-    "獲得感",
-    "歸屬感",
-    "幸福感",
 ]
 
 # 對外短訊分號（僅 audience: external + type: client-message，glossary §1.1.1）：
 # 訊息用句號斷句更像真人，分號＝書面腔。對外長文用分號列舉合理，故以 frontmatter 精準 gate、不擋長文。
 MESSAGE_SEMICOLON = "；"
 
-# 結論引導／雜訊框架詞 (writing-harness S1)
-# 高精度子集：只收低誤報的定型句與句首雜訊詞；模糊的「很+評價詞」交 S1.5/S2 判
-#
-# 自蒸餾棘輪：寫死的核心集是 bootstrap 高精度子集；可演化層由 noise-learned.json 注入——
-# 對候選詞累積信度達標、且過誤報 gate 的詞才晉升。每次人判 catch 下沉一個詞，
-# 機械層覆蓋率上升、後面幾站重複判斷的成本衰減。
-_EMPHASIS = "很|蠻|挺|超|超級|非常|相當|十分|有夠|頗|還挺|還蠻|更|最|特別"
-# 笛卡爾積 強調詞 × 評價詞 的評價端核心集；learned.eval_adjectives 追加進來
-_EVAL_ADJ_CORE = ["直覺", "有用", "實用", "好用", "厲害", "強大", "神奇", "驚人", "巧妙", "精彩"]
-
-_LEARNED_PATH = Path(__file__).parent / "noise-learned.json"
-
-
-def load_learned():
-    """讀自蒸餾棘輪晉升的詞表；檔不存在或壞檔則回空（向後相容，不擋既有檢查）。"""
-    try:
-        data = json.loads(_LEARNED_PATH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {"fixed_phrases": [], "eval_adjectives": []}
-    data.setdefault("fixed_phrases", [])
-    data.setdefault("eval_adjectives", [])
-    return data
-
-
-def build_eval_pattern(eval_adjs):
-    """組「強調詞 × 評價詞」笛卡爾積 regex（check 與棘輪工具共用，確保 gate 一致）。"""
-    return rf"(?:{_EMPHASIS})不?(?:{'|'.join(eval_adjs)})"
-
-
-_LEARNED = load_learned()
-
-CONCLUSION_LEAD_NOISE = [
-    r"(?:^|[。！？；])\s*(其實|老實說|坦白說|坦白講|說真的|講真的|我記得|不得不說|怎麼說呢)",
-    r"理由很[一-鿿]",
-    r"問題就?出在",
-    r"真正(難|值錢|重要|關鍵)的",
-    r"差很[多大]",  # C-03 評價替代量化（2026-06-22 入庫）
-    r"最(?:快|好|準|簡單|方便)的(?:方式|做法|方法)",  # 排他效率斷言未量化（2026-07-04 入庫，S1.5 自蒸餾）；「最新版本」等事實用法不在此型
-
-    r"說穿了",
-    r"歸根究[底柢]",
-    r"這正?是重點",
-    r"值得(注意|一提)的是",
-    r"又[一-鿿]{1,3}又[一-鿿]{1,3}",
-    # 「強調詞+空評價詞」族＝替讀者下判斷＝AI 味。模糊者刻意留 S2，
-    # 新戰犯經棘輪累積信度＋誤報 gate 後自動下沉到 _EVAL_ADJ。
-    build_eval_pattern(_EVAL_ADJ_CORE + _LEARNED["eval_adjectives"]),
-    *_LEARNED["fixed_phrases"],
+AI_TOOL_RESIDUE = [
+    (r"[?&](?:utm_source=(?:chatgpt\.com|openai)|referrer=grok\.com)(?=&|#|\s|[，。；！？)>]|$)", 0),
+    (r"(?<![A-Za-z0-9_])(?:turn\d+(?:search|news|fetch|view)\d+|cite(?:turn\d+\w*\d+))(?![A-Za-z0-9_])", re.IGNORECASE),
 ]
 
 # 半形標點全形化檢查 — 中文上下文不可用半形 , : ? ( ) ; !
 URL_RE = re.compile(r"https?://\S+")
-CODE_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
-INLINE_CODE_RE = re.compile(r"`[^`\n]+`")
 # CJK 統一表意 + 中文標點 + 全形區
 CJK_RE = re.compile(r"[一-鿿　-〿＀-￯]")
 HALF_PUNCT = set(",:?();!")
@@ -201,6 +127,169 @@ def strip_frontmatter(content):
         if len(parts) == 2:
             return parts[1]
     return content
+
+
+def configure_output():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
+def mask_chars(text):
+    return "".join(char if char in "\r\n" else " " for char in text)
+
+
+def mask_code_spans(text):
+    pattern = re.compile(
+        r"(?<!`)(`+)(?!`)(?:(?!\r?\n[ \t]*\r?\n).)*?(?<!`)\1(?!`)",
+        re.DOTALL,
+    )
+    return pattern.sub(lambda match: mask_chars(match.group(0)), text)
+
+
+def mask_quotes(line):
+    chars = list(line)
+    spans = []
+    pairs = {"「": "」", "『": "』", "“": "”"}
+    index = 0
+    while index < len(line):
+        if line[index] in pairs:
+            close = line.find(pairs[line[index]], index + 1)
+            if close >= 0:
+                spans.append((index, close + 1))
+                index = close + 1
+                continue
+        if line[index] == '"':
+            close = index + 1
+            while close < len(line):
+                if line[close] == '"':
+                    backslashes = 0
+                    before = close - 1
+                    while before >= 0 and line[before] == "\\":
+                        backslashes += 1
+                        before -= 1
+                    if backslashes % 2 == 0:
+                        spans.append((index, close + 1))
+                        index = close + 1
+                        break
+                close += 1
+            else:
+                index += 1
+            continue
+        index += 1
+    for start, end in spans:
+        chars[start:end] = " " * (end - start)
+    return "".join(chars)
+
+
+def mask_non_prose(body):
+    """Mask Markdown/code/quoted material without changing line positions."""
+    output = []
+    prose = []
+    block_starts = []
+    single_lines = []
+    fence_char = None
+    fence_length = 0
+    fence_prefix = 0
+    indented_block = False
+    previous_blank = True
+    previous_heading = False
+    list_indent = None
+
+    for raw_line in body.splitlines(keepends=True):
+        newline = "\n" if raw_line.endswith("\n") else ""
+        line = raw_line[:-1] if newline else raw_line
+        if line.endswith("\r"):
+            line, newline = line[:-1], "\r" + newline
+
+        list_item = re.match(r"^( {0,3})(?:[-+*]|\d{1,9}[.)])([ \t]+)", line)
+        if list_item:
+            list_indent = len(list_item.group(0))
+        leading = len(line) - len(line.lstrip(" "))
+        in_list = list_indent is not None and leading >= list_indent
+        relative = line[list_indent:] if in_list else line
+        prefix = list_indent if in_list else 0
+        fence = re.match(r"^ {0,3}(`{3,}|~{3,})", relative)
+        if fence_char:
+            closing = line[fence_prefix:] if len(line) >= fence_prefix else line
+            close = re.match(rf"^ {{0,3}}{re.escape(fence_char)}{{{fence_length},}}\s*$", closing)
+            output.append(" " * len(line) + newline)
+            prose.append(False)
+            block_starts.append(False)
+            single_lines.append(False)
+            if close:
+                fence_char = None
+            previous_blank = not line.strip()
+            previous_heading = False
+            continue
+        if fence:
+            run = fence.group(1)
+            fence_char, fence_length = run[0], len(run)
+            fence_prefix = prefix
+            output.append(" " * len(line) + newline)
+            prose.append(False)
+            block_starts.append(False)
+            single_lines.append(False)
+            previous_blank = False
+            previous_heading = False
+            continue
+
+        is_indented = line.startswith("    ") or line.startswith("\t")
+        relative_indent = leading - list_indent if in_list else leading
+        is_indented_code = (
+            in_list and relative_indent >= 4 and (indented_block or previous_blank)
+        ) or (
+            not in_list and is_indented and (indented_block or previous_blank or previous_heading)
+        )
+        if is_indented_code:
+            indented_block = True
+            output.append(" " * len(line) + newline)
+            prose.append(False)
+            block_starts.append(False)
+            single_lines.append(False)
+            previous_blank = False
+            previous_heading = False
+            continue
+        if not is_indented:
+            indented_block = False
+        if re.match(r"^ {0,3}>", line):
+            output.append(" " * len(line) + newline)
+            prose.append(False)
+            block_starts.append(False)
+            single_lines.append(False)
+            previous_blank = False
+            previous_heading = False
+            continue
+        output.append(line + newline)
+        prose.append(True)
+        is_heading = bool(re.match(r"^ {0,3}#{1,6}(?:\s|$)", line))
+        block_starts.append(bool(list_item) or is_heading)
+        single_lines.append(is_heading)
+        previous_blank = not line.strip()
+        previous_heading = is_heading
+        if line.strip() and leading < (list_indent or 0) and not list_item:
+            list_indent = None
+
+    index = 0
+    while index < len(output):
+        if not prose[index]:
+            index += 1
+            continue
+        end = index + 1
+        while (
+            end < len(output)
+            and prose[end]
+            and not single_lines[index]
+            and not block_starts[end]
+        ):
+            end += 1
+        masked = mask_code_spans("".join(output[index:end])).splitlines(keepends=True)
+        output[index:end] = [
+            mask_quotes(part[:-1]) + part[-1] if part.endswith(("\n", "\r")) else mask_quotes(part)
+            for part in masked
+        ]
+        index = end
+    return "".join(output)
 
 
 def parse_frontmatter(content):
@@ -269,6 +358,10 @@ def check_mainland_words(body):
     hits = []
     for word in MAINLAND_WORDS:
         hits.extend(find_all_with_line(body, re.escape(word)))
+    hits.extend(find_all_with_line(
+        body,
+        r"(?:登錄.{0,4}(?:帳號|使用者|用戶|密碼)|(?:帳號|使用者|用戶|密碼).{0,4}登錄)",
+    ))
     return hits
 
 
@@ -288,39 +381,20 @@ def check_public_jargon(body):
     return hits
 
 
-def check_written_idiom(body):
-    """書面成語／連接詞（僅 --public）：命中標出 + 建議口語。"""
-    hits = []
-    for pat, repl in WRITTEN_IDIOM:
-        for ln, text in find_all_with_line(body, pat):
-            hits.append((ln, f"{text} → 改{repl}"))
-    return hits
-
-
-def check_slop_abstract_nouns(body):
-    """slop 抽象名詞「X感」（僅 --public）：明列黑名單，還原成具體場景/動作。"""
-    hits = []
-    for word in SLOP_ABSTRACT_NOUNS:
-        for ln, text in find_all_with_line(body, re.escape(word)):
-            hits.append((ln, f"{text} → 還原成具體場景/動作（誰、會做什麼）"))
-    return hits
-
-
 def check_message_semicolon(body):
     """對外短訊分號（僅 external + client-message）：分號改句號斷句。
     清掉 code fence / inline code 後找全形「；」。"""
-    cleaned = CODE_FENCE_RE.sub(lambda m: " " * len(m.group(0)), body)
-    cleaned = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), cleaned)
+    cleaned = mask_non_prose(body)
     hits = []
     for ln, text in find_all_with_line(cleaned, MESSAGE_SEMICOLON):
         hits.append((ln, f"{text} → 改句號斷句（訊息少用分號）"))
     return hits
 
 
-def check_conclusion_lead_noise(body):
+def check_ai_tool_residue(body):
     hits = []
-    for pattern in CONCLUSION_LEAD_NOISE:
-        hits.extend(find_all_with_line(body, pattern))
+    for pattern, flags in AI_TOOL_RESIDUE:
+        hits.extend(find_all_with_line(body, pattern, flags))
     return hits
 
 
@@ -328,9 +402,7 @@ def check_halfwidth_punct(body):
     """掃中文上下文中的半形標點（前後 1 字含 CJK 即命中）。
     排除：URL、code fence、inline code、數字夾標點（1,000 / 12:30）。
     """
-    cleaned = body
-    cleaned = CODE_FENCE_RE.sub(lambda m: " " * len(m.group(0)), cleaned)
-    cleaned = INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), cleaned)
+    cleaned = mask_non_prose(body)
     cleaned = URL_RE.sub(lambda m: " " * len(m.group(0)), cleaned)
 
     hits = []
@@ -365,42 +437,44 @@ def fmt_hits(hits, limit=10):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    public = "--public" in sys.argv  # 對外模式：多跑「對外工程黑話」等紅燈檢查
-    if len(args) != 1:
-        print("Usage: taiwan-style-check.py <file.md> [--public]", file=sys.stderr)
-        return 2
+    configure_output()
+    parser = argparse.ArgumentParser(
+        description="Check Taiwan-style hard rules in a Markdown file."
+    )
+    parser.add_argument("path", type=Path)
+    parser.add_argument("--public", action="store_true", help="also check public-facing jargon")
+    args = parser.parse_args()
 
-    path = Path(args[0])
+    path = args.path
+    public = args.public
     if not path.exists():
         print(f"File not found: {path}", file=sys.stderr)
         return 2
 
     content = path.read_text(encoding="utf-8")
     body = strip_frontmatter(content)
+    scan_body = mask_non_prose(body)
     fm = parse_frontmatter(content)
     is_client_msg = fm.get("audience", "").startswith("external") and "client-message" in fm.get("type", "")
 
     results = {
-        "英文技術詞密度": check_english(body),
-        "小結格式標記": check_summary(body),
-        "段落引導語贅字（第 N 個 X）": check_numbered(body),
-        "否定懸念段落標題": check_negation(body),
-        "破折號漏網": check_dash(body),
-        "開場推銷詞": check_urgency(body),
+        "英文技術詞密度": check_english(scan_body),
+        "小結格式標記": check_summary(scan_body),
+        "段落引導語贅字（第 N 個 X）": check_numbered(scan_body),
+        "否定懸念段落標題": check_negation(scan_body),
+        "破折號漏網": check_dash(scan_body),
+        "開場推銷詞": check_urgency(scan_body),
         "半形標點漏網（中文上下文）": check_halfwidth_punct(body),
-        "大陸用語（glossary §2.1）": check_mainland_words(body),
-        "API 術語（glossary §3.1）": check_api_terms(body),
-        "結論引導／雜訊框架詞（writing-harness S1）": check_conclusion_lead_noise(body),
+        "大陸用語（glossary §2.1）": check_mainland_words(scan_body),
+        "AI 工具殘留": check_ai_tool_residue(scan_body),
     }
     if public:
-        results["對外工程黑話（--public，glossary §3.3）"] = check_public_jargon(body)
-        results["書面成語／連接詞（--public，glossary §3.4）"] = check_written_idiom(body)
-        results["slop 抽象名詞「X感」（--public，glossary §3.4）"] = check_slop_abstract_nouns(body)
+        results["API 術語（--public，glossary §3.1）"] = check_api_terms(scan_body)
+        results["對外工程黑話（--public，glossary §3.3）"] = check_public_jargon(scan_body)
     if is_client_msg:
         results["對外短訊分號（；，client-message）"] = check_message_semicolon(body)
 
-    contrast_count, contrast_hits = check_contrast(body)
+    contrast_count, contrast_hits = check_contrast(scan_body)
     any_hit = any(hits for hits in results.values()) or contrast_count > 2
 
     print(f"# 台灣口語硬規則檢查 — `{path.name}`\n")
